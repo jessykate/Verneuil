@@ -10,19 +10,19 @@ class Node
 	# problematic if we have a TON of nodes, and note that IDs from nodes that
 	# get killed never get re-used. 
 	@@id = 0
-	@@broadcastRadius = nil
-	@@bufferMin = nil
-	@@bufferRange = nil
+#	@@bufferMin = nil
+#	@@bufferRange = nil
+#	@@broadcastRange = nil
+#	@@broadcastMin= nil
 
 	def self.setup(broadcastRange, broadcastMin, bufferRange, bufferMin)
-		@@broadcastRange = broadcastRadius
-		@@braodcastMin = broadcastMin
+		@@broadcastRange = broadcastRange
+		@@broadcastMin= broadcastMin
 		@@bufferMin = bufferMin
 		@@bufferRange = bufferRange
 	end
 
 	def initialize
-		puts "calling initialize of Node"
 		# instantiate an ID from the global node ID space
 		@nid = @@id
 		@@id += 1
@@ -48,6 +48,14 @@ class Node
 		super
 	end
 	attr_accessor :nid, :neighbors, :broadcastRadius
+
+#	def ==(other)
+#		if @nid == other.nid then 
+#			return true
+#		else 
+#			return false
+#		end
+#	end
 
 	def updateNeighbors (list)
 		# the neighbors being passed in are physical neihgbors. neighbors in the

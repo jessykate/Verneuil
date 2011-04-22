@@ -20,6 +20,7 @@ module LMSEvents
 			supported = obj.instance_variable_get(:@supportedEvents)
 			supported['LMSPut'] = :LMSPut
 			supported['LMSGet'] = :LMSGet
+			supported['LMSManagedGet'] = :LMSManagedGet
 			obj.instance_variable_set(:@supportedEvents, supported)
 	end
 
@@ -27,8 +28,13 @@ module LMSEvents
 		@nodes[nodeID].put(tag, message, replicas)
 	end
 
-	def LMSGet(tag)
-		@nodes[nodeID].get(tag)
+	def LMSGet(nodeID, tag)
+		# returns item, probe
+		return @nodes[nodeID].get(tag)
+	end
+
+	def LMSManagedGet(nodeID, tag)
+		return @nodes[nodeID].managedGet(tag)
 	end
 end
 
@@ -63,7 +69,6 @@ module LMS
 	# this will get called via super from the including class' initialize
 	# method (by design)
 	def initialize()
-		puts "calling initialize of LMS"
 		@hashID= computeHash(@nid)
 		super
 	end

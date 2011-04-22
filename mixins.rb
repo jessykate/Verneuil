@@ -23,23 +23,27 @@ module Comms
 	end
 	attr_accessor :sim
 
+	def self.sim
+		return @@sim
+	end
+
 	def self.included(base)
-		base.class_eval {
-			# we want all nodes to share access to the same simulator, so sim
-			# is a true class variable. 
-			@@sim = Comms.sim
-		}
+		# we want all nodes to share access to the same simulator, so sim
+		# is a true class variable. 
+		base.send('class_variable_set', :@@sim, Comms.sim)
 	end
 
 	# instance method that Nodes will use to communicate with the outside
 	# world (simulator). 
 	def getNeighbors()
-		@@sim.getPhysicalNbrs(@ID)
+		@@sim.getPhysicalNbrs(@nid)
 	end
 
 end
 
-module UDSTopology
+class TopologyError < RuntimeError; end
+
+module UDSTopology 
 	# defines behaviour specific to a uniform disc topology (2D euclidean
 	# space with wrap-around behaviour). Is also demonstrative of the methods
 	# that another topology module would need to define to function with the
@@ -58,38 +62,48 @@ module UDSTopology
 			}
 		}
 	end
-	
+
+	# there has got to be a better way to do this
+	def self.extended(obj)
+		w = @width
+		h = @height
+		o = @occupied
+		obj.instance_variable_set(:@width, w) 
+		obj.instance_variable_set(:@height, h) 
+		obj.instance_variable_set(:@occupied, o) 
+	end
+
 	def distance(n1, n2)
 		# compute the euclidean distance between two node objects (noting that
 		# an object at (0,0) and (0,width-1) are neighbours in a space with
 		# wrap-around behaviour). 
-		xDist = (n1.x - n2.x) % @width
-		yDist = (n1.y - n2.y) % @height
-		return Math.sqrt(xDist**2 + yDist**2)
+		xDist = (n1.x - n2.x).abs % @width
+		yDist = (n1.y - n2.y).abs % @height
+		#puts "xDist = #{xDist}; yDist = #{yDist}"
+		tot = Math.sqrt(xDist**2 + yDist**2)
+		#puts "total distance = #{tot}"
+		return tot
 	end
 
-	def moveNode(nodeID, coords)
+	def moveNode(nodeID, newX, newY)
 		# move nodeID to a specific location specified by a tuple (in this
 		# case, (x,y), ensuring the location remains within the bounds of the
 		# defined topology. 	
 		oldX = @nodes[nodeID].x
 		oldY = @nodes[nodeID].y
-		newX = coords[0] % @width
-		newY = coords[1] % @height
-		if @occupied[[newX,newY]]
-			raise "Cannot move node to occupied location"
-		else
-			@occupied[[oldX,oldY]] = false
-			@nodes[nodeID].x = newX
-			@nodes[nodeID].y = newY
-			@occupied[[newX,newY]] = true
-		end
+		raise TopologyError, "Location (#{newX}, #{newY}) out of bounds" if 
+			!validLocation(newX, newY)
+		raise TopologyError, "Cannot move node to occupied location" if 
+			@occupied[[newX,newY]]
+		@occupied[[oldX,oldY]] = false
+		@nodes[nodeID].x = newX
+		@nodes[nodeID].y = newY
+		@occupied[[newX,newY]] = true
+		#puts "Moved #{nodeID} to (#{newX}, #{newY})"
 		return true
 	end
 
-	def validLocation(loc)
-		x = loc[0]
-		y = loc[1]
+	def validLocation(x,y)
 		if x < 0 or x > @width or y < 0 or y > @height
 			return false
 		else
@@ -113,16 +127,20 @@ module UDSTopology
 	end
 
 	def addNodeAtLocation(x,y)
-		loc = [x,y]
-		raise "Location Occupied" if @occupied[loc]
-		raise "Location out of bounds" if !validLocation(loc)
-	   	@occupied[loc] = true
+		raise TopologyError, "Location (#{newX}, #{newY}) out of bounds" if 
+			!validLocation(x,y)
+		raise TopologyError, "Location out of bounds" if !validLocation(x,y)
+	   	@occupied[[x,y]] = true
 		n = Node.new
 		# singleton methods. hawt. 
-		def n.x; return loc[0] end
-		def n.y; return loc[1] end
-		def n.x=(newX); n.x=newX; end
-		def n.y=(newY); n.y=newY; end
+		n.instance_eval {
+			@x = x
+			@y = y
+			def x; return @x; end
+			def y; return @y; end
+			def x=(newX); @x=newX; end
+			def y=(newY); @y=newY; end
+		}
 		@nodes[n.nid] = n
 		return n
 	end
@@ -150,8 +168,10 @@ module UDSTopology
 		x = @nodes[nodeID].x
 		y = @nodes[nodeID].y
 		[-1,0,1].each{|relX|
+			absX = (x+relX) % @width
 			[-1,0,1].each{|relY|
-				valid.push([x+relX, y+relY]) unless @occupied[[x+relX,y+relY]]
+				absY = (y+relY) % @height	
+				valid.push([absX, absY]) unless @occupied[[absX,absY]]
 			}
 		} 
 		return valid
@@ -169,8 +189,7 @@ end
 class Simulator
 	
 	def initialize()
-		@nodes = [] # [{nodeID => nodeObject}, {...}, ...]
-		@nodeData = [] # [{nodeID => currentNeighbors}, {...}, ...] 
+		@nodes = {} # nid : node
 		@time = 0
 
 		# there are some basic supported events for every simulator.
@@ -184,13 +203,33 @@ class Simulator
 		# do not increase the time or change the state of the system
 		@supportedEvents = {'addNode' => :addNode,
 							'addNodes' => :addNodes, 
+							'addNode' => :addNode, 
+							'addNodeAtLocation' => :addNodeAtLocation, 
 							'removeNode' => :removeNode,
 							'removeNodes' => :removeNodes,
 							'advanceState' => :advanceState,
+							'moveNodes' => :moveNodes,
+							'stepNodeRandom' =>  :stepNodeRandom,
 						} # {eventName => :functionReference, ...}
 
 	end	
 	attr_accessor :time
+
+	def num_nodes
+		return @nodes.length
+	end
+
+	def clear
+		# clears current nodes but does not reset time
+		@nodes = {}
+		@occupied = Hash.new
+		(0..@width-1).each{|x|
+			(0..@height-1).each{|y|
+				@occupied[[x,y]] = false
+			}
+		}
+
+	end
 
 	def getPhysicalNbrs(nodeID)
 		# iterate over all nodes and if the distance is within the broadcast
@@ -211,7 +250,6 @@ class Simulator
 		@supportedEvents[eventName] = :eventName
 	end
 
-
 	def event(eventName, *eventArgs)
 		# everything we ask the sim to do can get passed through this method,
 		# which will log the actions, increase the time step, and do other
@@ -219,7 +257,7 @@ class Simulator
 			
 		@time += 1
 		send(@supportedEvents[eventName], *eventArgs) if 
-			supportedEvents.include? eventName 
+			@supportedEvents.include? eventName 
 
 		# do some fancy logging here?
 	end
@@ -237,12 +275,12 @@ class Simulator
 		# modes the node one step in a random direction. return true unless
 		# there are no open neighbouring positions, in which case returns
 		# false. 
-		valid = validOneStepLocations()
+		valid = validOneStepLocations(nodeID)
 		if valid.empty?
 			return false
 		else
 			new = valid[rand(valid.length)]
-			moveNode(nodeID, [new[0], new[1]])
+			moveNode(nodeID, new[0], new[1])
 		end
 		return true
 	end
@@ -253,17 +291,15 @@ class Simulator
 	end
 
 	def addNodes(num)
-		(1..num).times{
+		num.times{
 			# adds the node to the topology
 			n = addNode()
-			# now call any protocol-specific init functions that need calling
-			nodeInit(n)
 		}
 	end
 
 	def removeNodes(num)
 		# delete one or more nodes selected at random
-		(0..num).times {
+		num.times {
 			nid = @nodes.keys()[rand(@nodes.length)]
 			removeNode(nid)	
 		}

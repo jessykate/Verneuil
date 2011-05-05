@@ -16,14 +16,6 @@ module LMSEvents
 	# the include call will invoke self.included() and register the events with
 	# the simulator. 
 	
-	def self.included(obj)
-			supported = obj.instance_variable_get(:@supportedEvents)
-			supported['LMSPut'] = :LMSPut
-			supported['LMSGet'] = :LMSGet
-			supported['LMSManagedGet'] = :LMSManagedGet
-			obj.instance_variable_set(:@supportedEvents, supported)
-	end
-
 	def LMSPut(nodeID, tag, message, replicas)
 		@nodes[nodeID].put(tag, message, replicas)
 	end
@@ -67,7 +59,7 @@ module LMS
 	end
 	
 	# this will get called via super from the including class' initialize
-	# method (by design)
+	# method (by construction)
 	def initialize()
 		@hashID= computeHash(@nid)
 		super

@@ -148,7 +148,7 @@ class SimulatorTests
 	end
 
 	def test_lms_put
-		@sim.event('addNodes', 100)
+		@sim.queue(time=1, 'addNodes', 100)
 		# numNew, numKill, percentMove
 		@sim.event('advanceState', 10,0,0)
 		# nodeID, tag, msg, replicas

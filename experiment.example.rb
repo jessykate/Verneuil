@@ -4,12 +4,14 @@ require 'mixins.rb'
 
 ######### SETUP ##########
 
-sim = Simulator.new
-sim.include LMSEvents
+# with method returns a new module
+sim = Simulator.with LMSEvents, UDSTopology.with width, height
+
+#sim.include LMSEvents
 # by including the UDSTopology module we build several new methods and instance
 # variables into the simulator.
-UDSTopology.setup(width, height)
-sim.include UDSTopology
+#UDSTopology.setup(width, height)
+#sim.include UDSTopology
 
 # initialize global parameters for LMS
 LMS.setup(hops=1, lambda_=256, max_failures=5, randWalkRange=10, randWalkMin=5)

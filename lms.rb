@@ -10,26 +10,6 @@ LMS handles replica determination, possibly based on dynamic criteria passed in
 from individual publishing nodes.  
 =end
 
-module LMSEvents
-	# gets included in the simulator
-	# sim.include LMSEvents
-	# the include call will invoke self.included() and register the events with
-	# the simulator. 
-	
-	def LMSPut(nodeID, tag, message, replicas)
-		@nodes[nodeID].put(tag, message, replicas)
-	end
-
-	def LMSGet(nodeID, tag)
-		# returns item, probe
-		return @nodes[nodeID].get(tag)
-	end
-
-	def LMSManagedGet(nodeID, tag)
-		return @nodes[nodeID].managedGet(tag)
-	end
-end
-
 module LMS
 	@@hops = nil
 	@@lambda = nil
@@ -70,6 +50,19 @@ module LMS
 		return rand(@@randomWalkRange) + @@randomWalkMin
 	end
 
+	def hash_string
+		return @@hash_functions[rand(@@hash_functions.length)].to_s
+	end
+
+	def put_init(key, item)
+		# assemble THE PROBE
+		probe = PUTProbe.new(item = item, initiator= @nid, 
+							 key=computeHash(key + hash_string()), 
+							 walk_length = randWalkLength(), 
+							 path=[], @@max_failures)
+		return probe
+	end	
+
 	def put(key, item, replicas)
 		initiator = @nid
 		successes = 0.0
@@ -78,9 +71,7 @@ module LMS
 			hash_string = @@hash_functions[rand(@@hash_functions.length)].to_s
 			hash = computeHash(key + hash_string)
 			walk_length = randWalkLength()
-			path = []
-			probe = PUTProbe.new(item, initiator, hash, walk_length, path, 
-								 @@max_failures)
+			probe = PUTProbe.new(item, initiator, hash, walk_length)
 			success = false
 			give_up = false
 			while not success and not give_up
@@ -95,7 +86,7 @@ module LMS
 					if probe.getFailures >= @@max_failures
 						give_up = true
 					else
-						probe.setLength(walk_length * 2)
+						probe.walk_length = walk_length * 2
 						probe.clearPath()
 						next
 					end        
@@ -104,25 +95,19 @@ module LMS
 					successes += 1.0
 					node.bufferAdd(key, item)
 				end
-
-				# log information about successes and failures, where the item was
-				# deposited, and the path it took. 
-				stats[r] = {'initiator' => initiator, 
-							'failures' => probe.getFailures, 
-							'success' => success, 'path' => probe.getStringPath, 
-							'location'=> @nid.to_s
-						}
 			end
+
+			# log information about successes and failures, where the item was
+			# deposited, and the path it took. 
+			stats[r] = {'source' => initiator, 
+						'failures' => probe.getFailures, 
+						'success' => success, 
+						'path' => probe.to_s, 
+						'put_location'=> node.nid
+					}
 		}
 
-		# recall = TP/TP+FN. in this case a FN (false negative) is when put()
-		# fails (when, ideally, it shouldn't). since the number of replicas
-		# requested is the total number of tries, TP+FN = replicas. the ideal
-		# recall for a put() would be 1.0.
-		stats['replicas'] = replicas
-		stats['successes'] = successes
-		recall = successes/replicas
-		return recall, stats
+		return stats
 	end
 
 	def get(k)
@@ -183,7 +168,7 @@ module LMS
 	end
 
 	def neighborhood
-		nbrs = getPhysicalNbrs()
+		nbrs = getNeighbors()
 		return nbrs if @@hops == 1 
 
 		# keep track of which neighbours we've already calculated so we don't
@@ -206,7 +191,7 @@ module LMS
 	def local_minimum(k)
 		# returns the node in the h-hop neighborhood whose hash forms a local
 		# minimum with the key to be stored
-		min_node = @node
+		min_node = self
 		min_dist = keyDistance(k)
 		neighbors = neighborhood()
 		neighbors.each{|node|
@@ -219,81 +204,105 @@ module LMS
 		return min_node
 	end
 
-	def random_walk(probe)
-		neighbors = getNeighbors()
-		probe.walk()
-		probe.add_to_path(@nid)
-		if probe.getLength() > 0
-			if neighbors.length > 0
-				randomNode = neighbors[rand(neighbors.length)]
-				return randomNode.random_walk(probe)
+	def receive_probe(probe)
+		# note that this method adds the NEXT node (the node it has chosen) to
+		# the probe path, not itself. ('itself' was added by the previous node)
+		if probe.random_walk? 
+			probe.decrease_steps
+			randomNode = neighbors[rand(neighbors.length)]
+			probe.path << randomNode
+		else # deterministic walk
+			min_node = local_minimum(probe.get_key)
+			if min_node.nid == @nid
+				status, reason = buffer_store(probe.item)
+				if status == true
+					probe.status = :success
+				else
+					probe.fail
+					probe.status = :failure
+					probe.error = reason
+				end
 			else
-				probe.setLength(0)
-				return self, probe
+				probe.path << min_node.nid
 			end
-		else
-			return self, probe
 		end
+		return probe
 	end
 
-	def deterministic_walk(probe)
-		probe.add_to_path(@nid)
-		# local minima for this item's key
-		min_node = local_minimum(probe.getKey())
-		if min_node.nid == @nid
-			return self
-		else
-			return min_node.deterministic_walk(probe)
-		end
-	end
+#	def random_walk(probe)
+#		neighbors = getNeighbors()
+#		#puts "in random_walk, #{@nid}'s neighbors = #{neighbors}"
+#		probe.walk()
+#		probe.add_to_path(@nid)
+#		if probe.getLength() > 0
+#			if neighbors.length > 0
+#				randomNode = neighbors[rand(neighbors.length)]
+#				return randomNode.random_walk(probe)
+#			else
+#				probe.walk_length = 0
+#				return self, probe
+#			end
+#		else
+#			return self, probe
+#		end
+#	end
+
+#	def deterministic_walk(probe)
+#		probe.add_to_path(@nid)
+#		# local minima for this item's key
+#		min_node = local_minimum(probe.getKey())
+#		if min_node.nid == @nid
+#			return self
+#		else
+#			return min_node.deterministic_walk(probe)
+#		end
+#	end
 
 
 end
 
 class Probe
-  def initialize(initiator, key, walk_length, path)
-   @initiator, @key, @walk_length, @path = initiator, key, walk_length, path
-  end
-  
-  def walk()
-    @walk_length -=1
-  end
-  
-  def setLength(length)
-    @walk_length = length
-  end
-  
-  def getLength()
-    return @walk_length
-  end
-  
-  def getKey()
-    return @key
-  end
-  
-  def getInitiator()
-    return @initiator
-  end
-  
-  def getPath()
-    return @path
-  end
-  
-  def finalNode()
-    return @path.last
-  end
+	def initialize(initiator, key, walk_length)
+		@initiator = initiator
+		@key = key
+		@walk_length = walk_length
+		@path = []
+		@status = :outbound
+		@error
+	end
+	attr_accessor :path, :walk_length, :status
 
-  def getStringPath()
-    s = ""
-    @path.each{|p|
-      s += p.to_s + "/"
-    }
-    return s.chop
-  end
-  
-  def add_to_path(nid)
-    @path.push(nid)
-  end
+	def random_walk?
+		return @walk_length > 0 || false
+	end
+
+	def decrease_steps
+		@walk_length -=1
+	end
+
+	def setLength(length)
+		@walk_length = length
+	end
+
+	def getKey()
+		return @key
+	end
+
+	def getInitiator()
+		return @initiator
+	end
+
+	def finalNode()
+		return @path.last
+	end
+
+	def to_s
+		s = ""
+		@path.each{|p|
+			s += p.to_s + "->"
+		}
+		return s.chop.chop
+	end
 
   def clearPath
     @path.clear()
@@ -305,14 +314,12 @@ class Probe
 end
 
 class PUTProbe < Probe
-  def initialize(item, initiator, key, walk_length, path, failure_count)
-    super(initiator, key, walk_length, path)
-    @item, @failure_count = item, 0
+  def initialize(item, initiator, key, walk_length)
+    super(initiator, key, walk_length)
+    @item = item 
+	@failure_count =  0
   end
-  
-  def getItem()
-    return @item
-  end
+  attr_reader :item
   
   def getFailures()
     return @failure_count

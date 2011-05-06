@@ -194,4 +194,73 @@ module UDSTopology
 end
 
 
+module LMSEvents
+	# include in the simulator
+	
+	def print_stats(s)
+		s.sort.each{|replica,info|
+			puts "replica #{replica}"
+			puts "-------------------"
+			info.each{|k,v|
+				puts "#{k}: #{v}"
+			}
+			puts ""
+		}
+	end
+
+	def put_init(nodeID, tag, message, replicas)
+		probe = @nodes[nodeID].put_init(tag, message)
+		queue(@time+1, :update_nbrs, nodeID, :send_probe, nodeID, probe)
+	end
+
+	def update_nbrs(nodeID, next_event, *args)
+		# update the nbrs of nodeID, then call the next_event with *args
+
+		nbrs = get_physical_nbrs(nodeID)
+		@nodes[nodeID].update_nbrs = nbrs
+
+		# AFTER we update the nbr nodes, with some probability move/kill
+		# other nodes.
+		# ...
+
+		queue(@time+1, next_event, *args)
+	end
+	
+	def send_probe(nodeID, probe_in)
+		probe_out = @nodes[nodeID].receive_probe(probe_in)
+		dst_node = probe_out.path.last
+		if dst_node == nodeID
+			# dst_node was the local minima. reply to the original node, with
+			# the probe containing success or failure information. 
+			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, probe)  
+		else
+			# update the neighbors of the destination node, and then send
+			queue(@time+1, :update_nbrs, dst_node, :send_probe, dst_node, probe_out)
+		end
+	end
+
+	def probe_reply nodeID, dst, probe
+		# do a deterministic walk back to the original node
+		next_hop = @nodes[nodeID].forward_reply(dst, probe)
+		if next_hop != nodeID
+			queue(@time+1. :update_nbrs, next_hop, :probe_reply, dst, probe)
+		end
+	end
+
+
+	def lms_put(nodeID, tag, message, replicas)
+		stats = @nodes[nodeID].put(tag, message, replicas)
+		print_stats(stats)
+	end
+
+	def lms_get(nodeID, tag)
+		# returns item, probe
+		return @nodes[nodeID].get(tag)
+	end
+
+	def lms_managed_get(nodeID, tag)
+		return @nodes[nodeID].managedGet(tag)
+	end
+end
+
 

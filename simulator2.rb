@@ -132,6 +132,20 @@ class Simulator
 	end
 
 	#	basic events
+	def get_physical_nbrs(nodeID)
+		# iterate over all nodes and if the distance is within the broadcast
+		# radius of the node, then it is a physical neighbour. O(n). Returns a
+		# list of node objects. 
+		thisNode = @nodes[nodeID]
+		nbrs = []
+		@nodes.values.each{|otherNode|
+			if ((thisNode != otherNode) and 
+				distance(thisNode, otherNode) < thisNode.broadcastRadius)
+				nbrs.push(otherNode)
+			end
+		}
+		return nbrs
+	end 
 
 
 	#	convenience methods

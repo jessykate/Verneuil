@@ -67,6 +67,7 @@ class Simulator_old
 				nbrs.push(otherNode)
 			end
 		}
+		puts "#{nodeID} has neighbors #{nbrs}"
 		return nbrs
 	end 
 

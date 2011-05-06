@@ -27,9 +27,8 @@ class Node
 		@nid = @@id
 		@@id += 1
 
-		@max_buffer = rand(@@bufferRange) + @@bufferMin
 		@broadcastRadius = rand(@@broadcastRange) + @@broadcastMin
-		@current_buffer = 0
+		@buffer_size = rand(@@bufferRange) + @@bufferMin
 		@buffer = {}
 		
 		@digest = BloomFilter.new(512, 10) # 512 bits, 10 hash functions
@@ -48,6 +47,7 @@ class Node
 		super
 	end
 	attr_accessor :nid, :neighbors, :broadcastRadius
+	attr_reader :digest
 
 #	def ==(other)
 #		if @nid == other.nid then 
@@ -67,61 +67,33 @@ class Node
 		return "Node#{@nid}"
 	end
 
+	##########################################
 	# Physical Storage Methods
+	##########################################
    
-	def bufferAdd(k, item)
+	def buffer_store(k, item)
 		# add the item if new or update the item if that key already exists in the
 		# buffer
-		unless bufferFull?
-			if containsKey?(k)
-				list = @buffer[k]
-				list.push(item)
-				@buffer.store(k, list)
-			else
-				list = []
-				list.push(item)
-				@buffer.store(k, list)
-				@digest.insert(k)
-			end
-			@current_buffer += 1 
+		if buffer_full? 
+			result = false
+			reason = "Buffer full"
+		else if @buffer.include? [k,item]
+			result = false
+			reason = "Duplicate"
 		else
-			raise "Max buffer size exceeded"
-		end
+			result = true
+			reason = nil
+			@buffer << [k,item]
+			@digest.insert(k)
+		return [result, reason]
 	end
 
-	def containsKey?(k)
-		return @buffer.key?(k)
-	end
-
-	def containsData?(item)
-		@buffer.each{|key, value|
-			value.each{|data|
-				if data == item
-					return true
-				end
-			}
-		}
-		return false
-	end
-
-	def bufferFull?
-		if @current_buffer >= @max_buffer
-			return true
-		else
-			return false
-		end
-	end
-
-	def bufferLength()
-		return @current_buffer
+	def buffer_full?
+		return @buffer.size == @buffer_size || false
 	end
 
 	def retrieve(k)
 		return @buffer[k]
-	end
-
-	def digest()
-		return @digest
 	end
 
 end

@@ -1,7 +1,20 @@
+require 'node'
+require 'lms'
+
+
+class NonLinearTimeError < RuntimeError; end
+class UnknownEventError < RuntimeError; end
 
 class PriorityQueue
 	def initialize
 		@q = Hash.new {|hash, key| hash[key] = []}
+		def @q.to_s 
+			s = ""
+			self.each{|k,v|
+				s += "#{k}: #{v} "
+			}
+			return s
+		end
 	end
 
 	def insert(priority, data)
@@ -11,80 +24,52 @@ class PriorityQueue
 
 	def next
 		# events with the lowest (soonest) time are removed first. 
+		return [false,false] if @q.empty?
 		next_events = @q.sort[0]
-		@q.delete(ret[0]) #delete by key value
-		return next_events
+		@q.delete(next_events[0]) #delete by key value
+		# returns false if @q is empty. 
+		return next_events 
+	end
+
+	def to_s
+		return "#{@q.length} items: { #{@q.to_s} }"
 	end
 end
 
-class Simulator_old
+class Simulator
 	
 	def initialize()
-		@nodes = {} # nid : node
+		@nodes = {} # nid => node
 		@time = 0
-
-		# there are some basic supported events for every simulator.
-		# Additionally, protocol-specific behaviour can be defined in a module
-		# and then included in a specific simulator. When that happens, the
-		# protocol-specific event module implements both a method for their
-		# event(s), and registers their event by adding it to the
-		# supportedEvents hash. It is worth noting that certain NON-event
-		# functionality is supported as well, such as retrieving a node, or
-		# calculating neighbours, etc. Non-events are for inspection only, they
-		# do not increase the time or change the state of the system
-		@supportedEvents = {'addNode' => :addNode,
-							'addNodes' => :addNodes, 
-							'addNode' => :addNode, 
-							'addNodeAtLocation' => :addNodeAtLocation, 
-							'removeNode' => :removeNode,
-							'removeNodes' => :removeNodes,
-							'advanceState' => :advanceState,
-							'moveNodes' => :moveNodes,
-							'stepNodeRandom' =>  :stepNodeRandom,
-						} # {eventName => :functionReference, ...}
-
 		# keep a priority queue for system events. general format for each
 		# item:
-		# { priority => {eventName => 'event', eventArgs => 'argList'}}
+		@stats = {
+			:avg_put_time, 0, :avg_get_time, 0, :avg_nbrs, 0, 
+			:lms_put_failures, 0, :lms_put_attempts, 0, 
+			:lms_get_failures, 0, :lms_get_attempts, 0,
+			:messages_expected, 0, :messages_present, 0,
+		}
 		@Q = PriorityQueue.new
 
 	end	
-	attr_accessor :time
+	attr_reader :time, :Q, :stats
+
+	def node_type node_class, *mixins
+		mixins.each{|mixin|
+			node_class.class_eval {
+				include mixin
+			}
+		}
+		@Node = node_class
+	end
 
 	def num_nodes
 		return @nodes.length
 	end
 
-	def getPhysicalNbrs(nodeID)
-		# iterate over all nodes and if the distance is within the broadcast
-		# radius of the node, then it is a physical neighbour. O(n). Returns a
-		# list of node objects. 
-		thisNode = @nodes[nodeID]
-		nbrs = []
-		@nodes.values.each{|otherNode|
-			if ((thisNode != otherNode) and 
-				distance(thisNode, otherNode) < thisNode.broadcastRadius)
-				nbrs.push(otherNode)
-			end
-		}
-		puts "#{nodeID} has neighbors #{nbrs}"
-		return nbrs
-	end 
-
-	def event(eventName, *eventArgs)
-		# everything we ask the sim to do can get passed through this method,
-		# which will log the actions, increase the time step, and do other
-		# management tasks as needed. 
-			
-		@time += 1
-		send(@supportedEvents[eventName], *eventArgs) if 
-			@supportedEvents.include? eventName 
-
-		# do some fancy logging here?
-	end
-
 	def queue(time, eventName, *eventArgs)
 		# @Q is a priority queue. events get popped off in priority order. 
+		puts "queueing #{eventName} for time #{time}"
 		@Q.insert(priority = time, data = [eventName, eventArgs])
 	end
 
@@ -92,17 +77,49 @@ class Simulator_old
 		# condition must evaluate to a boolean
 		while condition
 			time, events_now = @Q.next
-			until events_now.is_empty?
-			   eventName, eventArgs = events_now.shift	
-			   event(eventName, *eventArgs)
+			break if events_now == false
+			raise NonLinearTimeError if time < @time
+			# update the time
+			@time = time
+			# process the events scheduled for this time. events_now is a list
+			# of events, size >= 1.
+			until events_now.empty?
+				eventName, eventArgs = events_now.shift	
+				# eventName is a symbol or string
+				puts "time #{time}: event #{eventName} with args #{eventArgs}"
+				send(eventName, *eventArgs)
+			end
 		end
+		puts "finished!"
+	end
 
-	############## all methods that follow are private ############
-	###############################################################
-	private 
+	def addNodes(num)
+		num.times{
+			# adds the node to the topology
+			n = addNode()
+			puts "\tnode placed at #{n.x}, #{n.y}"
+		}
+	end
 
-	def getNode(nodeID)
-		return @nodes[nodeID]
+	def moveNodes(num)
+		# randomly selects num nodes and moves them one step. The nodes are
+		# independent, so all movements happen in parallel in one time unit. 
+		alreadyMoved = []
+		while num > 0 do
+			nid = @nodes.keys()[rand(@nodes.length)]
+			unless alreadyMoved.include? nid
+				stepNodeRandom(nid) 
+				num -= 1
+			end
+		end
+	end
+
+	def removeNodes(num)
+		# delete one or more nodes selected at random
+		num.times {
+			nid = @nodes.keys()[rand(@nodes.length)]
+			removeNode(nid)	
+		}
 	end
 
 	def stepNodeRandom(nodeID)
@@ -119,32 +136,21 @@ class Simulator_old
 		return true
 	end
 
-	def addNodes(num)
-		num.times{
-			# adds the node to the topology
-			n = addNode()
-		}
-	end
-
-	def removeNodes(num)
-		# delete one or more nodes selected at random
-		num.times {
-			nid = @nodes.keys()[rand(@nodes.length)]
-			removeNode(nid)	
-		}
-	end
-
-	def moveNodes(num)
-		alreadyMoved = []
-		while num > 0 do
-			nid = @nodes.keys()[rand(@nodes.length)]
-			unless alreadyMoved.include? nid
-				stepNodeRandom(nid) 
-				num -= 1
+	#	basic events
+	def get_physical_nbrs(nodeID)
+		# iterate over all nodes and if the distance is within the broadcast
+		# radius of the node, then it is a physical neighbour. O(n). Returns a
+		# list of node IDs. 
+		thisNode = @nodes[nodeID]
+		nbrs = []
+		@nodes.values.each{|otherNode|
+			if ((thisNode != otherNode) and 
+				distance(thisNode, otherNode) < thisNode.broadcastRadius)
+				nbrs.push(otherNode.nid)
 			end
-		end
-	end
-
+		}
+		return nbrs
+	end 
 
 	def advanceState(numNew, numKill, percentMove)
 		# advances the state of the system by one slice of time. the
@@ -163,7 +169,10 @@ class Simulator_old
 		numMove = (@nodes.length * percentMove).round 
 		moveNodes(numMove) unless numMove == 0
 	end
-		
+
+	#	convenience methods
 
 end
 
+
+	

@@ -1,6 +1,3 @@
-require 'bloomfilter.rb'
-require 'pp'
-
 =begin
 	Basic Node functionality
 =end
@@ -10,10 +7,6 @@ class Node
 	# problematic if we have a TON of nodes, and note that IDs from nodes that
 	# get killed never get re-used. 
 	@@id = 0
-#	@@bufferMin = nil
-#	@@bufferRange = nil
-#	@@broadcastRange = nil
-#	@@broadcastMin= nil
 
 	def self.setup(broadcastRange, broadcastMin, bufferRange, bufferMin)
 		@@broadcastRange = broadcastRange
@@ -29,9 +22,7 @@ class Node
 
 		@broadcastRadius = rand(@@broadcastRange) + @@broadcastMin
 		@buffer_size = rand(@@bufferRange) + @@bufferMin
-		@buffer = {}
-		
-		@digest = BloomFilter.new(512, 10) # 512 bits, 10 hash functions
+		@buffer = []
 		@neighbors = [] 
 
 		# not exactly sure what we use these for.. something to do with
@@ -46,18 +37,10 @@ class Node
 		# class). 
 		super
 	end
-	attr_accessor :nid, :neighbors, :broadcastRadius
-	attr_reader :digest
+	attr_accessor :nid, :broadcastRadius
+	attr_reader :neighbors
 
-#	def ==(other)
-#		if @nid == other.nid then 
-#			return true
-#		else 
-#			return false
-#		end
-#	end
-
-	def updateNeighbors (list)
+	def update_nbrs=(list)
 		# the neighbors being passed in are physical neihgbors. neighbors in the
 		# routing overlay may be different.  
 		@neighbors = list
@@ -77,14 +60,14 @@ class Node
 		if buffer_full? 
 			result = false
 			reason = "Buffer full"
-		else if @buffer.include? [k,item]
+		elsif @buffer.include? [k,item]
 			result = false
 			reason = "Duplicate"
 		else
 			result = true
 			reason = nil
 			@buffer << [k,item]
-			@digest.insert(k)
+		end
 		return [result, reason]
 	end
 

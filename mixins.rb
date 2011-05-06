@@ -208,59 +208,79 @@ module LMSEvents
 		}
 	end
 
-	def put_init(nodeID, tag, message, replicas)
-		probe = @nodes[nodeID].put_init(tag, message)
-		queue(@time+1, :update_nbrs, nodeID, :send_probe, nodeID, probe)
+	def put(nodeID, tag, message, replicas)
+		# gotta update neighbors before we start put-ing. 
+		puts "@time=#{@time} in #{__method__}"
+		queue(@time+1, :update_nbrs, nodeID)
+		queue(@time+2, :put_init, nodeID, tag, message, replicas)
 	end
 
-	def update_nbrs(nodeID, next_event, *args)
-		# update the nbrs of nodeID, then call the next_event with *args
+	def put_init(nodeID, tag, message, replicas)
+		puts "@time=#{@time} in #{__method__}"
+		replicas.times {
+			probe = @nodes[nodeID].put_init(tag, message, replicas)
+			if probe == :isolated
+				# then the probe failed because the node had no neighbors. gather
+				# some stats and discontinue this probe. 
+				return
+			end
+			dst_node = probe.path.last
+			puts "got dst_node = #{dst_node}"
+			# all these events get queued at the same relative time since they
+			# happen for different nodes
+			queue(@time+1, :update_nbrs, dst_node)
+			queue(@time+2, :send_probe, dst_node, probe)
+		}
+	end
 
+	def update_nbrs(nodeID)
+		# NOTE only suport 1-hop neighborhoods right now
+		puts "@time=#{@time} in #{__method__}"
+		# update the nbrs of nodeID
+		puts "updating nbrs for node #{nodeID}"
 		nbrs = get_physical_nbrs(nodeID)
 		@nodes[nodeID].update_nbrs = nbrs
 
 		# AFTER we update the nbr nodes, with some probability move/kill
 		# other nodes.
 		# ...
-
-		queue(@time+1, next_event, *args)
 	end
 	
 	def send_probe(nodeID, probe_in)
+		puts "@time=#{@time} in #{__method__}"
 		probe_out = @nodes[nodeID].receive_probe(probe_in)
+		if probe_out == :isolated
+			# then the probe failed because the node had no neighbors. gather
+			# some stats and discontinue this probe. 
+			return
+		end
 		dst_node = probe_out.path.last
 		if dst_node == nodeID
-			# dst_node was the local minima. reply to the original node, with
-			# the probe containing success or failure information. 
-			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, probe)  
+			# dst_node was the local minima. reply to the original node with
+			# the probe, containing success or failure information. 
+			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, probe_out)  
 		else
 			# update the neighbors of the destination node, and then send
-			queue(@time+1, :update_nbrs, dst_node, :send_probe, dst_node, probe_out)
+			queue(@time+1, :update_nbrs, dst_node) 
+			queue(@time+2, :send_probe, dst_node, probe_out)
 		end
 	end
 
-	def probe_reply nodeID, dst, probe
-		# do a deterministic walk back to the original node
-		next_hop = @nodes[nodeID].forward_reply(dst, probe)
-		if next_hop != nodeID
-			queue(@time+1. :update_nbrs, next_hop, :probe_reply, dst, probe)
+	def probe_reply nodeID, dst, probe_in
+		# find the way back to the original node
+		next_hop, probe_out, event_type  = @nodes[nodeID].forward_reply(dst, probe_in)
+		if next_hop 
+			queue(@time+1, :update_nbrs, next_hop) 
+			if event_type == :probe_reply
+				queue(@time+2, :probe_reply, next_hop, dst, probe_out)
+			elsif event_type == :send_probe
+				queue(@time+2, :send_probe, next_hop, probe_out)
+			else
+				raise UnknownEventError
+			end
 		end
 	end
 
-
-	def lms_put(nodeID, tag, message, replicas)
-		stats = @nodes[nodeID].put(tag, message, replicas)
-		print_stats(stats)
-	end
-
-	def lms_get(nodeID, tag)
-		# returns item, probe
-		return @nodes[nodeID].get(tag)
-	end
-
-	def lms_managed_get(nodeID, tag)
-		return @nodes[nodeID].managedGet(tag)
-	end
 end
 
 

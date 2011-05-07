@@ -44,15 +44,62 @@ class Simulator
 		# keep a priority queue for system events. general format for each
 		# item:
 		@stats = {
-			:avg_put_time, 0, :avg_get_time, 0, :avg_nbrs, 0, 
-			:lms_put_failures, 0, :lms_put_attempts, 0, 
-			:lms_get_failures, 0, :lms_get_attempts, 0,
+			:avg_put_time, 0, :avg_get_time, 0, 
+			:avg_neighbors,0, :neighbor_updates, 0,
+		   	:avg_density, 0, :density_updates, 0,
+
+			:lms_put_attempts, 0, 
+			:lms_put_successes, 0, 
+			:lms_put_retries, 0,
+			:lms_put_giveup, 0,
+			# includes failure data for retries as well. 
+			:lms_put_failures_isolated, 0,
+			:lms_put_failures_full, 0,
+			:lms_put_failures_duplicate, 0,
+			:lms_put_failures_lost, 0,
+
+			:lms_get_attempts, 0,
+			:lms_get_successes, 0, 
+			:lms_get_failures_isolated, 0,
+			:lms_get_failures_not_found, 0,
+			
 			:messages_expected, 0, :messages_present, 0,
 		}
 		@Q = PriorityQueue.new
 
 	end	
 	attr_reader :time, :Q, :stats
+
+	def print_stats
+		puts "\t\t\tAverages"
+		puts "============================================================="
+		
+		puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
+		puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
+		puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
+		puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
+		puts "avg_density\t\t\t#{@stats[:avg_density]}"
+		puts "density_updates\t\t\t#{@stats[:density_updates]}"
+
+		puts "\n\t\t\tPut Statistics"
+		puts "============================================================="
+
+		puts "lms_put_attempts\t\t#{@stats[:lms_put_attempts]}"
+		puts "lms_put_successes\t\t#{@stats[:lms_put_successes]}"
+		puts "lms_put_retries\t\t\t#{@stats[:lms_put_retries]}"
+		puts "lms_put_giveup\t\t\t#{@stats[:lms_put_giveup]}"
+		puts "lms_put_failures_isolated\t#{@stats[:lms_put_failures_isolated]}"
+		puts "lms_put_failures_full\t\t#{@stats[:lms_put_failures_full]}"
+		puts "lms_put_failures_duplicate\t#{@stats[:lms_put_failures_duplicate]}"
+		puts "lms_put_failures_lost\t\t#{@stats[:lms_put_failures_lost]}"
+
+#			:lms_get_attempts, 0,
+#			:lms_get_successes, 0, 
+#			:lms_get_failures_isolated, 0,
+#			:lms_get_failures_not_found, 0,
+#			
+#			:messages_expected, 0, :messages_present, 0,
+	end
 
 	def node_type node_class, *mixins
 		mixins.each{|mixin|
@@ -97,8 +144,11 @@ class Simulator
 		num.times{
 			# adds the node to the topology
 			n = addNode()
-			puts "\tnode placed at #{n.x}, #{n.y}"
 		}
+		current_density = Float(@nodes.length)/Float(@width*@height)
+		@stats[:avg_density] = Float((@stats[:avg_density]*@stats[:density_updates]) + 
+								current_density)/Float(@stats[:density_updates]+1)
+		@stats[:density_updates] += 1
 	end
 
 	def moveNodes(num)

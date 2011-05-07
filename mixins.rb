@@ -197,7 +197,7 @@ end
 module LMSEvents
 	# include in the simulator
 	
-	def print_stats(s)
+	def print_replica_stats(s)
 		s.sort.each{|replica,info|
 			puts "replica #{replica}"
 			puts "-------------------"
@@ -218,10 +218,12 @@ module LMSEvents
 	def put_init(nodeID, tag, message, replicas)
 		puts "@time=#{@time} in #{__method__}"
 		replicas.times {
-			probe = @nodes[nodeID].put_init(tag, message, replicas)
+			@stats[:lms_put_attempts] += 1
+			probe = @nodes[nodeID].put_init(tag, message, replicas, @time)
 			if probe == :isolated
 				# then the probe failed because the node had no neighbors. gather
 				# some stats and discontinue this probe. 
+				@stats[:lms_put_failures_isolated] += 1
 				return
 			end
 			dst_node = probe.path.last
@@ -239,6 +241,9 @@ module LMSEvents
 		# update the nbrs of nodeID
 		puts "updating nbrs for node #{nodeID}"
 		nbrs = get_physical_nbrs(nodeID)
+		@stats[:avg_neighbors] = Float((@stats[:avg_neighbors]*@stats[:neighbor_updates]) + 
+								nbrs.length)/Float(@stats[:neighbor_updates]+1)
+		@stats[:neighbor_updates] += 1
 		@nodes[nodeID].update_nbrs = nbrs
 
 		# AFTER we update the nbr nodes, with some probability move/kill
@@ -248,17 +253,21 @@ module LMSEvents
 	
 	def send_probe(nodeID, probe_in)
 		puts "@time=#{@time} in #{__method__}"
-		probe_out = @nodes[nodeID].receive_probe(probe_in)
+		probe_out = @nodes[nodeID].receive_probe(probe_in, @time)
 		if probe_out == :isolated
 			# then the probe failed because the node had no neighbors. gather
 			# some stats and discontinue this probe. 
+			@stats[:lms_put_failures_isolated] += 1
 			return
 		end
 		dst_node = probe_out.path.last
 		if dst_node == nodeID
-			# dst_node was the local minima. reply to the original node with
-			# the probe, containing success or failure information. 
-			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, probe_out)  
+			# dst_node WAS the local minima. reply to the initiating node with
+			# the probe, containing success or failure information. (don't need
+			# to update neighbors here since we're starting at the same node we
+			# just came from) (probably, this decision should be made by the
+			# NODE, not the simulator). 
+			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
 		else
 			# update the neighbors of the destination node, and then send
 			queue(@time+1, :update_nbrs, dst_node) 
@@ -266,18 +275,41 @@ module LMSEvents
 		end
 	end
 
-	def probe_reply nodeID, dst, probe_in
+	def probe_reply nodeID, dst, msg 
 		# find the way back to the original node
-		next_hop, probe_out, event_type  = @nodes[nodeID].forward_reply(dst, probe_in)
-		if next_hop 
-			queue(@time+1, :update_nbrs, next_hop) 
-			if event_type == :probe_reply
-				queue(@time+2, :probe_reply, next_hop, dst, probe_out)
-			elsif event_type == :send_probe
-				queue(@time+2, :send_probe, next_hop, probe_out)
-			else
-				raise UnknownEventError
+		response = @nodes[nodeID].forward_reply(dst, msg, @time)
+		case response[:status]
+		when :forward
+			queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
+			queue(@time+2, :probe_reply, response[:data][:next_hop], 
+				  response[:data][:dst], response[:data][:msg] )
+		when :retry, :failure
+			# record reason for failure in both cases. then retry if that's
+			# what was specified. 
+			case response[:error]
+			when :isolated
+				@stats[:lms_put_failures_isolated] += 1
+			when :duplicate
+				@stats[:lms_put_failures_duplicate] += 1
+			when :full
+				@stats[:lms_put_failures_full] += 1
+			when :lost
+				@stats[:lms_put_failures_lost] += 1
 			end
+			if response[:status] == :retry
+				@stats[:lms_put_retries] += 1
+				queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
+				queue(@time+2, :send_probe,response[:data][:next_hop],response[:data][:new_probe])
+			else # status == failure
+				@stats[:lms_put_giveup] += 1
+			end
+		when :success
+			delta_t = response[:data][:probe].end_time - response[:data][:probe].start_time
+			@stats[:avg_put_time] = Float(@stats[:lms_put_successes]*@stats[:avg_put_time]+ 
+										  delta_t)/Float(@stats[:lms_put_successes]+1)
+			@stats[:lms_put_successes] += 1
+		else
+			raise UnknownEventError
 		end
 	end
 

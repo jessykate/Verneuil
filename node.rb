@@ -59,10 +59,10 @@ class Node
 		# buffer
 		if buffer_full? 
 			result = false
-			reason = "Buffer full"
+			reason = :full
 		elsif @buffer.include? [k,item]
 			result = false
-			reason = "Duplicate"
+			reason = :duplicate
 		else
 			result = true
 			reason = nil

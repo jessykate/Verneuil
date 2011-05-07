@@ -42,6 +42,7 @@ module Comms
 end
 
 class TopologyError < RuntimeError; end
+class InvalidNodeID < RuntimeError; end
 
 module UDSTopology 
 	# defines behaviour specific to a uniform disc topology (2D euclidean
@@ -209,10 +210,19 @@ module LMSEvents
 	end
 
 	def put(nodeID, tag, message, replicas)
-		# gotta update neighbors before we start put-ing. 
 		puts "@time=#{@time} in #{__method__}"
+		# gotta update neighbors before we start put-ing. 
+		raise InvalidNodeID if nodeID >= @nodes.length
 		queue(@time+1, :update_nbrs, nodeID)
 		queue(@time+2, :put_init, nodeID, tag, message, replicas)
+	end
+
+	def get(nodeID, tag)
+		puts "@time=#{@time} in #{__method__}"
+		raise InvalidNodeID if nodeID >= @nodes.length
+		# gotta update neighbors before we start get-ing. 
+		queue(@time+1, :update_nbrs, nodeID)
+		queue(@time+2, :get_init, nodeID, tag)
 	end
 
 	def put_init(nodeID, tag, message, replicas)
@@ -224,6 +234,7 @@ module LMSEvents
 				# then the probe failed because the node had no neighbors. gather
 				# some stats and discontinue this probe. 
 				@stats[:lms_put_failures_isolated] += 1
+				@stats[:lms_put_giveup] += 1
 				return
 			end
 			dst_node = probe.path.last
@@ -233,6 +244,23 @@ module LMSEvents
 			queue(@time+1, :update_nbrs, dst_node)
 			queue(@time+2, :send_probe, dst_node, probe)
 		}
+	end
+
+	def get_init(nodeID, tag)
+		puts "@time=#{@time} in #{__method__}"
+		@stats[:lms_get_attempts] += 1
+		probe = @nodes[nodeID].get_init(tag, @time)
+		if probe == :isolated
+			# then the probe failed because the node had no neighbors. gather
+			# some stats and discontinue this probe. 
+			@stats[:lms_get_failures_isolated] += 1
+			@stats[:lms_get_giveup] += 1
+			return
+		end
+		dst_node = probe.path.last
+		puts "got dst_node = #{dst_node}"
+		queue(@time+1, :update_nbrs, dst_node)
+		queue(@time+2, :send_probe, dst_node, probe)
 	end
 
 	def update_nbrs(nodeID)
@@ -257,7 +285,13 @@ module LMSEvents
 		if probe_out == :isolated
 			# then the probe failed because the node had no neighbors. gather
 			# some stats and discontinue this probe. 
-			@stats[:lms_put_failures_isolated] += 1
+			if probe_in.type == :put
+				@stats[:lms_put_failures_isolated] += 1
+				@stats[:lms_put_giveup] += 1
+			else
+				@stats[:lms_get_failures_isolated] += 1
+				@stats[:lms_get_giveup] += 1
+			end
 			return
 		end
 		dst_node = probe_out.path.last
@@ -267,7 +301,11 @@ module LMSEvents
 			# to update neighbors here since we're starting at the same node we
 			# just came from) (probably, this decision should be made by the
 			# NODE, not the simulator). 
-			queue(@time+1, :probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+			if probe_out.type == :put
+				queue(@time+1, :put_probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+			else
+				queue(@time+1, :get_probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+			end
 		else
 			# update the neighbors of the destination node, and then send
 			queue(@time+1, :update_nbrs, dst_node) 
@@ -275,13 +313,58 @@ module LMSEvents
 		end
 	end
 
-	def probe_reply nodeID, dst, msg 
+	def get_probe_reply nodeID, dst, msg 
 		# find the way back to the original node
-		response = @nodes[nodeID].forward_reply(dst, msg, @time)
+		response = @nodes[nodeID].forward_get_reply(dst, msg, @time)
 		case response[:status]
 		when :forward
 			queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
-			queue(@time+2, :probe_reply, response[:data][:next_hop], 
+			queue(@time+2, :get_probe_reply, response[:data][:next_hop], 
+				  response[:data][:dst], response[:data][:msg] )
+		when :failure
+			# record reason for failure.
+			case response[:error]
+			when :isolated
+				@stats[:lms_get_failures_isolated] += 1
+			when :missing
+				@stats[:lms_get_failures_missing] += 1
+			when :lost
+				@stats[:lms_get_failures_lost] += 1
+			end
+			@stats[:lms_get_giveup] += 1
+		when :success
+			delta_t = response[:data][:probe].end_time - response[:data][:probe].start_time
+			@stats[:avg_get_time] = Float(@stats[:lms_get_successes]*@stats[:avg_get_time]+ 
+										  delta_t)/Float(@stats[:lms_get_successes]+1)
+			@stats[:lms_get_successes] += 1
+			delta_t_reply = @time - response[:data][:probe].end_time
+			@stats[:avg_get_reply_time] = Float(@stats[:lms_get_successes]*@stats[:avg_get_reply_time]+ 
+										  delta_t_reply)/Float(@stats[:lms_get_successes]+1)
+			puts "item retrieved:"
+			response[:data][:probe].item.each{|tag, location_list|
+				puts "#{tag}: "
+				pp location_list
+			}
+		else
+			raise UnknownEventError
+		end
+		unless response[:status] == :forward or response[:error] == :lost 
+			location_found= response[:data][:probe].path.last
+			key_searched= response[:data][:probe].orig_key
+			#puts location_found
+			#puts key_searched
+			#gets
+			@stats[:get_locations][key_searched] << location_found
+		end
+	end
+
+	def put_probe_reply nodeID, dst, msg 
+		# find the way back to the original node
+		response = @nodes[nodeID].forward_put_reply(dst, msg, @time)
+		case response[:status]
+		when :forward
+			queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
+			queue(@time+2, :put_probe_reply, response[:data][:next_hop], 
 				  response[:data][:dst], response[:data][:msg] )
 		when :retry, :failure
 			# record reason for failure in both cases. then retry if that's
@@ -308,6 +391,12 @@ module LMSEvents
 			@stats[:avg_put_time] = Float(@stats[:lms_put_successes]*@stats[:avg_put_time]+ 
 										  delta_t)/Float(@stats[:lms_put_successes]+1)
 			@stats[:lms_put_successes] += 1
+			delta_t_reply = @time - response[:data][:probe].end_time
+			@stats[:avg_put_reply_time] = Float(@stats[:lms_put_successes]*@stats[:avg_put_reply_time]+ 
+										  delta_t_reply)/Float(@stats[:lms_put_successes]+1)
+			location_stored = response[:data][:probe].path.last
+			key_stored = response[:data][:probe].orig_key
+			@stats[:put_locations][key_stored] << location_stored
 		else
 			raise UnknownEventError
 		end

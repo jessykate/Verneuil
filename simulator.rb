@@ -45,6 +45,7 @@ class Simulator
 		# item:
 		@stats = {
 			:avg_put_time, 0, :avg_get_time, 0, 
+			:avg_put_reply_time, 0, :avg_get_reply_time, 0, 
 			:avg_neighbors,0, :neighbor_updates, 0,
 		   	:avg_density, 0, :density_updates, 0,
 
@@ -60,9 +61,14 @@ class Simulator
 
 			:lms_get_attempts, 0,
 			:lms_get_successes, 0, 
+			:lms_get_giveup, 0,
 			:lms_get_failures_isolated, 0,
-			:lms_get_failures_not_found, 0,
+			:lms_get_failures_missing, 0,
+			:lms_get_failures_lost, 0,
 			
+
+			:put_locations, Hash.new {|hash, key| hash[key] = []},
+			:get_locations, Hash.new {|hash, key| hash[key] = []},
 			:messages_expected, 0, :messages_present, 0,
 		}
 		@Q = PriorityQueue.new
@@ -75,7 +81,9 @@ class Simulator
 		puts "============================================================="
 		
 		puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
+		puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
 		puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
+		puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
 		puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
 		puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
 		puts "avg_density\t\t\t#{@stats[:avg_density]}"
@@ -93,12 +101,48 @@ class Simulator
 		puts "lms_put_failures_duplicate\t#{@stats[:lms_put_failures_duplicate]}"
 		puts "lms_put_failures_lost\t\t#{@stats[:lms_put_failures_lost]}"
 
-#			:lms_get_attempts, 0,
-#			:lms_get_successes, 0, 
-#			:lms_get_failures_isolated, 0,
-#			:lms_get_failures_not_found, 0,
-#			
-#			:messages_expected, 0, :messages_present, 0,
+		puts "\n\t\t\tGet Statistics"
+		puts "============================================================="
+
+		puts "lms_get_attempts\t\t#{@stats[:lms_get_attempts]}"
+		puts "lms_get_successes\t\t#{@stats[:lms_get_successes]}"
+		puts "lms_get_giveup\t\t\t#{@stats[:lms_get_giveup]}"
+		puts "lms_get_failures_isolated\t#{@stats[:lms_get_failures_isolated]}"
+		puts "lms_get_failures_missing\t#{@stats[:lms_get_failures_missing]}"
+		puts "lms_get_failures_lost\t\t#{@stats[:lms_get_failures_lost]}"
+
+		puts "\n\t\t\tRequest Details"
+		puts "============================================================="
+
+		puts "put_locations"
+		@stats[:put_locations].each{|tag, location_list|
+			puts "for tag #{tag}: "
+			location_list.uniq.sort.each{|x|
+				print "#{x},"
+			}
+			puts ""
+		}
+		
+		puts ""
+		puts "get_locations"
+		@stats[:get_locations].each{|tag, location_list|
+			puts "for tag #{tag}: "
+			location_list.uniq.sort.each{|x|
+				print "#{x},"
+			}
+			puts ""
+		}
+
+		puts ""
+		@stats[:put_locations].each{|tag, location_list|
+			puts "comparison for tag #{tag}"
+			(location_list - @stats[:get_locations][tag]).sort.each{|x|
+				print "#{x},"
+			}
+			puts ""
+			
+		}
+
 	end
 
 	def node_type node_class, *mixins

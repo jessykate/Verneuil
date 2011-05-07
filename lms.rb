@@ -83,6 +83,14 @@ module LMS
 		return @@hash_functions[rand(@@hash_functions.length)].to_s
 	end
 
+	def get_init(key, time)
+		# assemble THE PROBE
+		hash_key = compute_hash(key + hash_string())
+		probe = Probe.new(initiator= @nid, key, hash_key, walk_length = randWalkLength(), time)
+		# sending to receive_probe first will initialize the random walk
+		return receive_probe(probe, time)
+	end	
+
 	def put_init(key, item, time, replicas=false, rw= false)
 		# assemble THE PROBE
 		# if this is a put request with a backoff factor due to failure, rw
@@ -110,8 +118,7 @@ module LMS
 		return receive_probe(probe, time)
 	end	
 
-	def forward_reply(dst, msg, time)
-		# check if this node is the destination...
+	def forward_get_reply(dst, msg, time)
 		response = {}
 		if msg[:hops] >= @@reply_ttl
 			response[:status] = :failure
@@ -119,6 +126,48 @@ module LMS
 			return response
 		end
 		probe = msg[:probe]
+		# check if this node is the destination...
+		if dst == @nid
+			# see if it was a failure or success
+			if probe.status == :failure
+				response[:status] = :failure
+				response[:error] = probe.error
+				response[:data] = {:probe, probe}
+			else
+				# uhh... we're done!
+				response[:status] = :success
+				response[:data] = {:probe, probe}
+			end
+		else
+			# doesn't really matter if we use random or deterministic choice
+			# here since the nodes are not ordered in any way. but if the
+			# local_min IS this node, but is NOT the destination, then pick a
+			# random nbr instead. 
+			min = local_minimum(dst)
+			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
+			if not min 
+				#if we have no neighbors the message is basically dropped. 
+				response[:status] = :failure
+				probe.error = :isolated
+				response[:data] = {:probe, probe}
+			else
+				response[:status] = :forward
+				new_msg = {:probe, probe, :hops, msg[:hops]+1}
+				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
+			end
+		end
+		return response
+	end
+
+	def forward_put_reply(dst, msg, time)
+		response = {}
+		if msg[:hops] >= @@reply_ttl
+			response[:status] = :failure
+			response[:error] = :lost
+			return response
+		end
+		probe = msg[:probe]
+		# check if this node is the destination...
 		if dst == @nid
 			# see if it was a failure or success
 			request = @requests.get_put_item(probe.key, probe.item)
@@ -136,7 +185,7 @@ module LMS
 				else
 					response[:status] = :failure
 					response[:error] = probe.error
-					response[:data] = probe
+					response[:data] = {:probe, probe}
 				end		
 			else
 				request[:successes] << {:nodeID =>probe.path.last}
@@ -235,12 +284,22 @@ module LMS
 		else # deterministic walk
 			min_node = local_minimum(probe.key)
 			if min_node == @nid
-				status, reason = buffer_store(probe.key, probe.item)
+				# only difference between PUT and GET probes is here
+				if probe.type == :put
+					status, info = buffer_store(probe.key, probe.item)
+				else
+					status, info = buffer_get(probe.key)
+				end
+
+				# bookkeeping and return
 				if status == true
 					probe.status = :success
+					if probe.type == :get
+						probe.item = info
+					end
 				else
 					probe.status = :failure
-					probe.error = reason
+					probe.error = info
 				end
 				probe.end_time = time
 			else
@@ -253,9 +312,13 @@ module LMS
 end
 
 class Probe
-	def initialize(initiator, key, walk_length, start_time)
+	def initialize(initiator, key, hash_key, walk_length, start_time)
+		@type = :get
 		@initiator = initiator
-		@key = key
+		@key = hash_key
+		# the original key, unhashed (this is kind of an ugly hack for when a
+		# PUTProbe needs to be retried...shrug.
+		@orig_key = key
 		# the +1 is sort of a stupid hack since the first 'step' on the random
 		# walk is the originating node is itself. should find a better way to
 		# do that. 
@@ -269,7 +332,7 @@ class Probe
 		@error
 	end
 	attr_accessor :initiator, :path, :walk_length, :status, :error, :end_time
-	attr_reader :total_walk_length, :key, :start_time 
+	attr_reader :total_walk_length, :key, :start_time, :type, :orig_key
 
 	def random_walk?
 		return @walk_length > 0 || false
@@ -279,16 +342,17 @@ class Probe
 		@walk_length -=1
 	end
 
-	def getKey()
-		return @key
+	# for storing any items found during the get request
+	def item=(i)
+		@item = i
 	end
 
-	def getInitiator()
-		return @initiator
+	def item
+		return @item
 	end
 
-	def finalNode()
-		return @path.last
+	def to_s
+		return "<Probe: item: #{@item}, initiator: #{@initiator}, key: #{@key}, random_walk_length: #{@total_walk_length}, current_walk_length: #{@walk_length}, path: #{path_to_s}, status: #{status}, error: #{error} >"
 	end
 
 	def path_to_s
@@ -299,24 +363,14 @@ class Probe
 		return s.chop.chop
 	end
 
-  def clearPath
-    @path.clear()
-  end  
-
-  def pop_last()
-    return @path.pop
-  end
 end
 
 class PUTProbe < Probe
   def initialize(item, initiator, key, hash_key, walk_length, start_time)
-    super(initiator, hash_key, walk_length, start_time)
+    super(initiator, key, hash_key, walk_length, start_time)
+	@type = :put
     @item = item 
-	# the original key, unhashed (this is kind of an ugly hack for when a
-	# PUTProbe needs to be retried...shrug.
-	@orig_key = key
   end
-  attr_reader :item, :orig_key
 
   def to_s
 	  return "<Probe: item: #{@item}, initiator: #{@initiator}, key: #{@key}, random_walk_length: #{@total_walk_length}, current_walk_length: #{@walk_length}, path: #{path_to_s}, status: #{status}, error: #{error} >"

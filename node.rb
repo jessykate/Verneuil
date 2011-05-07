@@ -75,8 +75,19 @@ class Node
 		return @buffer.size == @buffer_size || false
 	end
 
-	def retrieve(k)
-		return @buffer[k]
+	def buffer_get(k)
+		results = []
+		@buffer.each{|key, item|
+			results << item if k == key
+		}
+		if results.empty?
+			result = false
+			info = :missing
+		else
+			result = true
+			info = results
+		end
+		return [result, info]
 	end
 
 end

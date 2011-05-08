@@ -6,43 +6,7 @@
 
 =end
 
-module Comms
-	# defines a simulated communications ability for the nodes.
-	# needs to talk to the one simulator, and every node.
-	# usage: in an experiment, once a simulator s is defined:
-	# class Node
-	#	extend Comms
-	# end
-	# # commSetup is a class method
-	# Node.commSetup(s)
-	# n = Node.new
-	# n.getNeighbors()
-
-	def self.setup(s)
-		@@sim = s
-	end
-	attr_accessor :sim
-
-	def self.sim
-		return @@sim
-	end
-
-	def self.included(base)
-		# we want all nodes to share access to the same simulator, so sim
-		# is a true class variable. 
-		base.send('class_variable_set', :@@sim, Comms.sim)
-	end
-
-	# instance method that Nodes will use to communicate with the outside
-	# world (simulator). 
-	def getNeighbors()
-		@@sim.getPhysicalNbrs(@nid)
-	end
-
-end
-
 class TopologyError < RuntimeError; end
-class InvalidNodeID < RuntimeError; end
 
 module UDSTopology 
 	# defines behaviour specific to a uniform disc topology (2D euclidean
@@ -114,6 +78,7 @@ module UDSTopology
 		# not be the case-- getting out of a car, turning on a device, etc. 
 		available = emptySpots()
 		if available.empty?
+			puts "sim full!"
 			return false
 		else
 			loc = available[rand(available.length)]
@@ -147,6 +112,7 @@ module UDSTopology
 		unless n == nil 
 			@occupied[[n.x,n.y]] = false
 			@nodes.delete(nodeID)		
+			@dead_nodes << nodeID
 			return true
 		end
 		return false
@@ -209,20 +175,22 @@ module LMSEvents
 		}
 	end
 
-	def put(nodeID, tag, message, replicas)
+	def put(tag, message, replicas)
 		puts "@time=#{@time} in #{__method__}"
 		# gotta update neighbors before we start put-ing. 
-		raise InvalidNodeID if nodeID >= @nodes.length
-		queue(@time+1, :update_nbrs, nodeID)
-		queue(@time+2, :put_init, nodeID, tag, message, replicas)
+		nodeID = @nodes.keys()[rand(@nodes.length)]
+		raise InvalidNodeID unless @nodes.keys.include?nodeID
+		queue(@time+1, @current_event_id, :update_nbrs, nodeID)
+		queue(@time+2, @current_event_id, :put_init, nodeID, tag, message, replicas)
 	end
 
-	def get(nodeID, tag)
+	def get(tag)
 		puts "@time=#{@time} in #{__method__}"
-		raise InvalidNodeID if nodeID >= @nodes.length
+		nodeID = @nodes.keys[rand(@nodes.length)]
+		raise InvalidNodeID unless @nodes.keys.include?nodeID
 		# gotta update neighbors before we start get-ing. 
-		queue(@time+1, :update_nbrs, nodeID)
-		queue(@time+2, :get_init, nodeID, tag)
+		queue(@time+1, @current_event_id, :update_nbrs, nodeID)
+		queue(@time+2, @current_event_id, :get_init, nodeID, tag)
 	end
 
 	def put_init(nodeID, tag, message, replicas)
@@ -241,8 +209,8 @@ module LMSEvents
 			puts "got dst_node = #{dst_node}"
 			# all these events get queued at the same relative time since they
 			# happen for different nodes
-			queue(@time+1, :update_nbrs, dst_node)
-			queue(@time+2, :send_probe, dst_node, probe)
+			queue(@time+1, @current_event_id, :update_nbrs, dst_node)
+			queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 		}
 	end
 
@@ -259,28 +227,19 @@ module LMSEvents
 		end
 		dst_node = probe.path.last
 		puts "got dst_node = #{dst_node}"
-		queue(@time+1, :update_nbrs, dst_node)
-		queue(@time+2, :send_probe, dst_node, probe)
+		queue(@time+1, @current_event_id, :update_nbrs, dst_node)
+		queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 	end
 
-	def update_nbrs(nodeID)
-		# NOTE only suport 1-hop neighborhoods right now
+	def send_probe(origin, nodeID, probe_in)
 		puts "@time=#{@time} in #{__method__}"
-		# update the nbrs of nodeID
-		puts "updating nbrs for node #{nodeID}"
-		nbrs = get_physical_nbrs(nodeID)
-		@stats[:avg_neighbors] = Float((@stats[:avg_neighbors]*@stats[:neighbor_updates]) + 
-								nbrs.length)/Float(@stats[:neighbor_updates]+1)
-		@stats[:neighbor_updates] += 1
-		@nodes[nodeID].update_nbrs = nbrs
 
-		# AFTER we update the nbr nodes, with some probability move/kill
-		# other nodes.
-		# ...
-	end
-	
-	def send_probe(nodeID, probe_in)
-		puts "@time=#{@time} in #{__method__}"
+		# nodeID was chosen from a list of the origin's neighbors at the time
+		# the message was scheduled. but it's possible the destination has
+		# moved or died since then. if nodeID is no longer a nbr of origin,
+		# then this message is dropped.
+		verify_neighbors(origin, nodeID)
+
 		probe_out = @nodes[nodeID].receive_probe(probe_in, @time)
 		if probe_out == :isolated
 			# then the probe failed because the node had no neighbors. gather
@@ -302,24 +261,30 @@ module LMSEvents
 			# just came from) (probably, this decision should be made by the
 			# NODE, not the simulator). 
 			if probe_out.type == :put
-				queue(@time+1, :put_probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+				queue(@time+1, @current_event_id, :put_probe_reply, nodeID, 
+					  probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
 			else
-				queue(@time+1, :get_probe_reply, nodeID, probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+				queue(@time+1, @current_event_id, :get_probe_reply, nodeID, 
+					  probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
 			end
 		else
 			# update the neighbors of the destination node, and then send
-			queue(@time+1, :update_nbrs, dst_node) 
-			queue(@time+2, :send_probe, dst_node, probe_out)
+			queue(@time+1, @current_event_id, :update_nbrs, dst_node) 
+			queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe_out)
 		end
 	end
 
 	def get_probe_reply nodeID, dst, msg 
 		# find the way back to the original node
+
+		verify_neighbors(nodeID, dst)
+		
 		response = @nodes[nodeID].forward_get_reply(dst, msg, @time)
 		case response[:status]
 		when :forward
-			queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
-			queue(@time+2, :get_probe_reply, response[:data][:next_hop], 
+			next_hop = response[:data][:next_hop]
+			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
+			queue(@time+2, @current_event_id, :get_probe_reply, next_hop, 
 				  response[:data][:dst], response[:data][:msg] )
 		when :failure
 			# record reason for failure.
@@ -360,11 +325,15 @@ module LMSEvents
 
 	def put_probe_reply nodeID, dst, msg 
 		# find the way back to the original node
+
+		verify_neighbors(nodeID, dst)
+		
 		response = @nodes[nodeID].forward_put_reply(dst, msg, @time)
 		case response[:status]
 		when :forward
-			queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
-			queue(@time+2, :put_probe_reply, response[:data][:next_hop], 
+			next_hop = response[:data][:next_hop]
+			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
+			queue(@time+2, @current_event_id, :put_probe_reply, next_hop, 
 				  response[:data][:dst], response[:data][:msg] )
 		when :retry, :failure
 			# record reason for failure in both cases. then retry if that's
@@ -381,8 +350,9 @@ module LMSEvents
 			end
 			if response[:status] == :retry
 				@stats[:lms_put_retries] += 1
-				queue(@time+1, :update_nbrs, response[:data][:next_hop]) 
-				queue(@time+2, :send_probe,response[:data][:next_hop],response[:data][:new_probe])
+				next_hop = response[:data][:next_hop]
+				queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
+				queue(@time+2, @current_event_id, :send_probe, nodeID, next_hop, response[:data][:new_probe])
 			else # status == failure
 				@stats[:lms_put_giveup] += 1
 			end

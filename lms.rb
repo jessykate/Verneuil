@@ -233,27 +233,6 @@ module LMS
 		end
 	end
 
-	def neighborhood
-		nbrs = getNeighbors()
-		return nbrs if @@hops == 1 
-
-		# keep track of which neighbours we've already calculated so we don't
-		# duplicate efforts. 
-		alreadyCalculated = []
-		@@hops.times{
-			moreNbrs = nbrs
-			nbrs.each{|nbr|
-				unless alreadyCalculated.include? nbr   
-					moreNbrs += getPhysicalNbrs(nbr)
-					alreadyCalculated.push(nbr) 
-				end
-			} 
-			nbrs += moreNbrs
-		}
-		nbrs.delete(@nid)	
-		return nbrs.uniq
-	end
-
 	def local_minimum(k)
 		# returns the node in the h-hop neighborhood whose hash forms a local
 		# minimum with the key to be stored

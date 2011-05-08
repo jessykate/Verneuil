@@ -4,6 +4,10 @@ require 'lms'
 
 class NonLinearTimeError < RuntimeError; end
 class UnknownEventError < RuntimeError; end
+class InvalidNodeID < RuntimeError; end
+class InvalidProbability < RuntimeError; end
+class InvalidDistance < RuntimeError; end
+class DeadNodeError < RuntimeError; end
 
 class PriorityQueue
 	def initialize
@@ -17,9 +21,14 @@ class PriorityQueue
 		end
 	end
 
-	def insert(priority, data)
+	def insert(priority, event_id, data)
 		# lower priority is HIGHER
-		@q[priority] << data
+
+		# neat way to generate a short uniq id (uses base 36), from
+		# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
+		event_id = rand(36**8).to_s(36) unless event_id
+		# each event contains event_name, event_args, event_id
+		@q[priority] << data + [event_id]
 	end
 
 	def next
@@ -39,11 +48,25 @@ end
 class Simulator
 	
 	def initialize()
-		@nodes = {} # nid => node
+		@nodes = Hash.new {|hash, key| node_moved_or_died(key) if @dead_nodes.include? key } # nid => node
+		@dead_nodes = []
 		@time = 0
+		@current_event_id = nil
+
 		# keep a priority queue for system events. general format for each
-		# item:
+		# item: priority => [eventName, eventArgs]
+		@Q = PriorityQueue.new
+
+		# probability of nodes moving, joining, and parting the network at any
+		# given timestep. 
+		@move = 0.0
+		@part = 0.0
+		@join = 0.0
+
+		# fun, fun statistics. 
 		@stats = {
+			:events_per_unit_time, [],
+
 			:avg_put_time, 0, :avg_get_time, 0, 
 			:avg_put_reply_time, 0, :avg_get_reply_time, 0, 
 			:avg_neighbors,0, :neighbor_updates, 0,
@@ -66,12 +89,17 @@ class Simulator
 			:lms_get_failures_missing, 0,
 			:lms_get_failures_lost, 0,
 			
-
+			# a record of locations where items were stored and attempts were
+			# made to retrieve. 
 			:put_locations, Hash.new {|hash, key| hash[key] = []},
 			:get_locations, Hash.new {|hash, key| hash[key] = []},
+			
+			# for each message, log {event_id => {start_time, end_time, history}
+			# history is one of success, dropped, lost, full, duplicate
+			:message_log, {},
+			
 			:messages_expected, 0, :messages_present, 0,
 		}
-		@Q = PriorityQueue.new
 
 	end	
 	attr_reader :time, :Q, :stats
@@ -140,8 +168,16 @@ class Simulator
 				print "#{x},"
 			}
 			puts ""
-			
 		}
+
+#		puts ""
+#		@stats[:message_log].each{|event_id, history|
+#			puts event_id
+#			history.each{|time, event|
+#				print "t#{time}: #{event}. "
+#			}
+#			puts ""
+#		}
 
 	end
 
@@ -158,10 +194,11 @@ class Simulator
 		return @nodes.length
 	end
 
-	def queue(time, eventName, *eventArgs)
-		# @Q is a priority queue. events get popped off in priority order. 
-		puts "queueing #{eventName} for time #{time}"
-		@Q.insert(priority = time, data = [eventName, eventArgs])
+	def queue(time, event_id, event_name, *event_args)
+		# queues the event with args. @Q is a priority queue. events get popped
+		# off in priority order. 
+		puts "queueing #{event_name} for time #{time}"
+		@Q.insert(priority = time, event_id, data = [event_name, event_args])
 	end
 
 	def run(condition=true)
@@ -170,39 +207,176 @@ class Simulator
 			time, events_now = @Q.next
 			break if events_now == false
 			raise NonLinearTimeError if time < @time
+
+			@stats[:events_per_unit_time] << {:time, @time, :num_events, events_now.length}
 			# update the time
+			@delta_t = time - @time
 			@time = time
+			
+			# each time step, independent of what has been scheduled, we update
+			# node positions and network membership according to the values set
+			# up in the dynamics() method. 
+
+			# how many to operate on? (need to get this number before we change
+			# number of nodes)
+			starting_size = @nodes.length
+			#room_available = (@width*@height)-starting size
+
+			puts "network size this step: #{starting_size}"
+			puts "delta_t: #{@delta_t}"
+
+			# (note: there's a difference between moving each of n nodes t
+			# steps, and n nodes one step at each t. the latter will result in
+			# some overlap, so seems slightly more 'correct')
+			num_move = Integer(@move*starting_size) 
+			distance = @delta_t
+			# former approach: moveNodes(num_move, distance)
+			# latter approach:
+			distance.times { moveNodes(num_move) } unless num_move == 0
+
+			# how many to add?
+			# note: add them after the move
+			num_join= Integer(@join*starting_size*@delta_t)
+			puts "adding #{num_join}"
+
+			# how many to kill off?
+			# note: calling this before or after adding nodes will affect
+			# whether we only kill off nodes that were present durin the last
+			# event or also some which could have showed up after. in general,
+			# the latter seems more accurate. (although a bit of a waste
+			# computationally). 
+			num_part = Integer(@part*starting_size*@delta_t)
+			puts "removing #{num_part}"
+
+			# this is some trickery so that, if there's a big jump in time,
+			# adding or removing all the nodes first doesn't completelly kill
+			# the network. 
+			common = (num_part < num_join ? num_part : num_join )
+			(2*common).times {|i|
+				(i % 2) == 0 ? addNodes(1) : removeNodes(1)
+			} unless (num_part == 0 or num_join == 0)
+
+			unless num_join == num_part
+				num_join > num_part ? remaining = :addNodes : remaining = :removeNodes
+				send(remaining,  (num_join-num_part).abs)
+			end
+			puts "number of dead nodes = #{@dead_nodes.length}. list:"
+			pp @dead_nodes
+			puts "number of live nodes = #{@nodes.length}. list:"
+			pp @nodes.keys
+
 			# process the events scheduled for this time. events_now is a list
 			# of events, size >= 1.
 			until events_now.empty?
-				eventName, eventArgs = events_now.shift	
-				# eventName is a symbol or string
-				puts "time #{time}: event #{eventName} with args #{eventArgs}"
-				send(eventName, *eventArgs)
+				event_name, event_args, event_id = events_now.shift	
+				puts "time #{time}: event #{event_name} with args #{event_args}"
+	
+				@current_event_id = event_id
+
+				# start/append to the history for this event
+				if not @stats[:message_log][event_id]
+					@stats[:message_log][event_id] = []
+				end
+
+				@stats[:message_log][event_id] << [@time, event_name]
+
+				# if any event attempts to act on a dead node, or send a
+				# message to a node which is no longer accessible from the
+				# originator, message_dropped gets thrown (and
+				# node_moved_or_died gets called). 
+				catch :message_dropped do 
+					send(event_name, *event_args) 
+				end
 			end
 		end
 		puts "finished!"
 	end
 
+	def node_moved_or_died nodeID
+		# update statistics and drop the message
+		@stats[:message_log][@current_event_id] << [@time, :dropped]
+		puts "message dropped. punting"
+		throw :message_dropped
+	end
+
+	def gaussian_rand 
+		# returns a value between 0 and 1 from a gaussian distribution. see
+		# http://www.taygeta.com/random/gaussian.html. 
+		begin
+			u1 = 2 * rand - 1
+			u2 = 2 * rand - 1
+			w = u1 * u1 + u2 * u2
+		end while w >= 1
+
+		w = Math::sqrt( ( -2 * Math::log(w)) / w )
+		g2 = u1 * w;
+		g1 = u2 * w;
+		return g1
+	end				
+
+	def dynamics move, join, part
+		# move, join and part represent probability values for each action.
+		# these probabilities are applied to a random subset of nodes before
+		# each event, to simulate regular dynamics. so if move = 0.2, and the
+		# delta time between the last event and this event is 10 time units,
+		# then 20% of nodes could have moved up to 10 steps during that time.
+		# the amount they actually move is a random number between 0 and
+		# delta_t, sampled from a gaussian distribution. updates can be
+		# scheduled during simulation execution, or set once and applied for
+		# the duration.  
+		raise InvalidProbability if move < 0 or move > 1
+		raise InvalidProbability if join < 0 or join > 1
+		raise InvalidProbability if part < 0 or part > 1
+		@move = move
+		@join = join
+		@part = part
+	end
+
+	def update_nbrs(nodeID)
+		# NOTE only suport 1-hop neighborhoods right now
+		puts "@time=#{@time} in #{__method__}"
+		# update the nbrs of nodeID
+		puts "updating nbrs for node #{nodeID}"
+		nbrs = get_physical_nbrs(nodeID)
+		@stats[:avg_neighbors] = Float((@stats[:avg_neighbors]*@stats[:neighbor_updates]) + 
+								nbrs.length)/Float(@stats[:neighbor_updates]+1)
+		@stats[:neighbor_updates] += 1
+		@nodes[nodeID].update_nbrs = nbrs
+		puts "updated neighbors for node #{nodeID} with list #{nbrs}"
+	end
+	
+	def verify_neighbors(origin, destination)
+		node_moved_or_died destination unless 
+		get_physical_nbrs(origin).include? destination or 
+		origin == destination
+	end
+
 	def addNodes(num)
+		print "adding nodes with ids "
 		num.times{
-			# adds the node to the topology
+			# add the node to the topology
 			n = addNode()
+			print "#{n.nid} " if n
 		}
 		current_density = Float(@nodes.length)/Float(@width*@height)
 		@stats[:avg_density] = Float((@stats[:avg_density]*@stats[:density_updates]) + 
 								current_density)/Float(@stats[:density_updates]+1)
 		@stats[:density_updates] += 1
+		puts ""
 	end
 
-	def moveNodes(num)
-		# randomly selects num nodes and moves them one step. The nodes are
+	def moveNodes(num, distance=1)
+		# randomly selects num nodes and moves them distance (default 1). The nodes are
 		# independent, so all movements happen in parallel in one time unit. 
+		raise InvalidDistance if not distance.is_a? Integer
 		alreadyMoved = []
 		while num > 0 do
 			nid = @nodes.keys()[rand(@nodes.length)]
 			unless alreadyMoved.include? nid
-				stepNodeRandom(nid) 
+				alreadyMoved << nid
+				distance.times {
+					stepNodeRandom(nid) 
+				}
 				num -= 1
 			end
 		end
@@ -210,10 +384,17 @@ class Simulator
 
 	def removeNodes(num)
 		# delete one or more nodes selected at random
+		print "removing nodes "
 		num.times {
 			nid = @nodes.keys()[rand(@nodes.length)]
+			print "#{nid} "
 			removeNode(nid)	
 		}
+		puts ""
+		current_density = Float(@nodes.length)/Float(@width*@height)
+		@stats[:avg_density] = Float((@stats[:avg_density]*@stats[:density_updates]) + 
+								current_density)/Float(@stats[:density_updates]+1)
+		@stats[:density_updates] += 1
 	end
 
 	def stepNodeRandom(nodeID)
@@ -230,7 +411,6 @@ class Simulator
 		return true
 	end
 
-	#	basic events
 	def get_physical_nbrs(nodeID)
 		# iterate over all nodes and if the distance is within the broadcast
 		# radius of the node, then it is a physical neighbour. O(n). Returns a
@@ -263,8 +443,6 @@ class Simulator
 		numMove = (@nodes.length * percentMove).round 
 		moveNodes(numMove) unless numMove == 0
 	end
-
-	#	convenience methods
 
 end
 

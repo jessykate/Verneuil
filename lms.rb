@@ -42,6 +42,7 @@ module LMS
 		# considered lost?
 		@@reply_ttl = reply_ttl
 	end
+	attr_reader :hops, :lambda, :max_failures, :randomWalkRange, :randomWalkMin, :reply_ttl 
 	
 	# this will get called via super from the including class' initialize
 	# method (by construction)
@@ -104,22 +105,25 @@ module LMS
 				response[:data] = {:probe, probe}
 			end
 		else
-			# doesn't really matter if we use random or deterministic choice
-			# here since the nodes are not ordered in any way. but if the
-			# local_min IS this node, but is NOT the destination, then pick a
-			# random nbr instead. 
-			min = local_minimum(dst)
-			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
-			if not min 
-				#if we have no neighbors the message is basically dropped. 
-				response[:status] = :failure
-				probe.error = :isolated
-				response[:data] = {:probe, probe}
-			else
-				response[:status] = :forward
-				new_msg = {:probe, probe, :hops, msg[:hops]+1}
-				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
-			end
+			# we need to find a smart neighbor to fwd to
+			response = smart_forward dst, probe, msg
+
+#			# doesn't really matter if we use random or deterministic choice
+#			# here since the nodes are not ordered in any way. but if the
+#			# local_min IS this node, but is NOT the destination, then pick a
+#			# random nbr instead. 
+#			min = local_minimum(dst)
+#			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
+#			if not min 
+#				#if we have no neighbors the message is basically dropped. 
+#				response[:status] = :failure
+#				probe.error = :isolated
+#				response[:data] = {:probe, probe}
+#			else
+#				response[:status] = :forward
+#				new_msg = {:probe, probe, :hops, msg[:hops]+1}
+#				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
+#			end
 		end
 		return response
 	end
@@ -159,25 +163,66 @@ module LMS
 				response[:data] = {:probe, probe}
 			end
 		else
-			# doesn't really matter if we use random or deterministic choice
-			# here since the nodes are not ordered in any way. but if the
-			# local_min IS this node, but is NOT the destination, then pick a
-			# random nbr instead. 
-			min = local_minimum(dst)
-			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
-			if not min 
-				#if we have no neighbors the message is basically dropped. 
-				response[:status] = :failure
-				probe.error = :isolated
-				response[:data] = probe
-			else
-				response[:status] = :forward
-				new_msg = {:probe, probe, :hops, msg[:hops]+1}
-				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
-			end
+			# we need to find a smart neighbor to fwd to
+			response = smart_forward dst, probe, msg
+		end
+		return response
+
+#			# doesn't really matter if we use random or deterministic choice
+#			# here since the nodes are not ordered in any way. but if the
+#			# local_min IS this node, but is NOT the destination, then pick a
+#			# random nbr instead. 
+#			min = local_minimum(dst)
+#			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
+#			if not min 
+#				#if we have no neighbors the message is basically dropped. 
+#				response[:status] = :failure
+#				probe.error = :isolated
+#				response[:data] = probe
+#			else
+#				response[:status] = :forward
+#				new_msg = {:probe, probe, :hops, msg[:hops]+1}
+#				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
+#			end
+#		end
+#		return response
+	end
+
+	def smart_forward dst, probe, msg
+		response = {}
+		if @neighbors.empty?
+			#if we have no neighbors the message is basically dropped. 
+			response[:status] = :failure
+			probe.error = :isolated
+			response[:data] = probe
+		else
+			# try and find the way back to the source by leveraging information
+			# in the path. basically, the 'closer' in the path we can get to
+			# the source, the better. so slice the probe path wherever this
+			# node appears, then search for neighbors `closer' to the source. 
+			way_back = [dst]+probe.path[0..(probe.path.index(@nid) || -1)]
+			puts "at node #{@nid}"
+			puts "neighbors"
+			pp @neighbors
+			puts "entire path"
+			pp probe.path
+			puts "way_back"
+			pp way_back
+			way_back.each {|step| # will start at the goal and back off 
+				puts "checking path list for #{step}"
+				if @neighbors.include? step
+					puts "neighbor list included #{step}"
+					gets
+					response[:status] = :forward
+					new_msg = {:probe, probe, :hops, msg[:hops]+1}
+					response[:data] = {:dst, dst, :msg, new_msg, :next_hop, step}
+					break
+				end
+			}
 		end
 		return response
 	end
+
 
 	def compute_hash(nid)
 		d = Digest::SHA1.hexdigest(nid.to_s).hex

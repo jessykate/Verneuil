@@ -14,6 +14,7 @@ class Node
 		@@bufferMin = bufferMin
 		@@bufferRange = bufferRange
 	end
+	attr_reader :broadcastRange, :broadcastMin, :bufferRange, :bufferMin
 
 	def initialize
 		# instantiate an ID from the global node ID space

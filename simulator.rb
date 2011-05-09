@@ -106,121 +106,105 @@ class Simulator
 
 	def print_stats
 
-		puts "\n\t\t\tRequest Details"
-		puts "============================================================="
+		randid = rand(36**8).to_s(36) 
+		log = File.open("logs/#{randid}.log", "w")
 
-		puts "put_locations"
-		@stats[:put_locations].each{|tag, location_list|
-			puts "for tag #{tag}: "
-			location_list.uniq.sort.each{|x|
-				print "#{x},"
-			}
-			puts ""
-		}
+		log.puts "\t\t\tExperiment Results"
+		log.puts "\t\t\tJoin: #{@join}, Part: #{@part}, Move: #{@move}"
+#		log.puts "\t\t\t Node setup: broadcastRange: #{Node.broadcastRange}, broadcastMin: #{Node.broadcastMin}"
+#		log.puts "\t\t\t\tbufferMin: #{Node.bufferMin}, bufferRange: #{Node.bufferRange}"
+#		log.puts "\t\t\t LMS setup: hops: #{LMS.hops}, lambda_: #{LMS.lambda}"
+#		log.puts "\t\t\t\tmax_failures: #{LMS.max_failures}, randWalkRange: #{LMS.randWalkRange}" 
+#		log.puts "\t\t\t\trandWalkMin: #{LMS.randWalkMin}, reply_ttl: #LMS.reply_ttl}"
+
+		log.puts "============================================================="
 		
-		puts ""
-		puts "get_locations"
-		@stats[:get_locations].each{|tag, location_list|
-			puts "for tag #{tag}: "
-			location_list.uniq.sort.each{|x|
-				print "#{x},"
-			}
-			puts ""
-		}
 
-		puts ""
-		@stats[:put_locations].each{|tag, location_list|
-			puts "comparison for tag #{tag}"
-			(location_list - @stats[:get_locations][tag]).sort.each{|x|
-				print "#{x},"
-			}
-			puts ""
-		}
-
-		puts "\t\t\tEvents per unit time"
-		puts "============================================================="
-		pp @stats[:events_per_unit_time].sort{|a,b| a[:time]<=>b[:time]}
+		log.puts "\t\t\tAverages"
+		log.puts "============================================================="
 		
-		puts ""
+		log.puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
+		log.puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
+		log.puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
+		log.puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
+		log.puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
+		log.puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
+		log.puts "avg_density\t\t\t#{@stats[:avg_density]}"
+		log.puts "Total messages\t\t\t#{@stats[:message_log].length}"
 
-#		puts "\t\t\tEvent Histories"
-#		puts "============================================================="
+		
+		log.puts "\n\t\t\tPut Statistics"
+		log.puts "============================================================="
+		
+		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put}
+		log.puts "Total Put Messages = #{put_logs.length}"
+
+		num_dropped = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
+		log.puts "num_dropped = #{num_dropped}"
+
+		num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
+		log.puts "num_success= #{num_success}"
+
+		num_isolated= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
+		log.puts "num_isolated= #{num_isolated}"
+
+		num_lost = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
+		log.puts "num_lost= #{num_lost}"
+		
+		num_full= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
+		log.puts "num_full= #{num_full}"
+		
+		num_duplicate= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
+		log.puts "num_duplicate= #{num_duplicate}"
+		
+		num_retry= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
+		log.puts "num_retry= #{num_retry}"
+
+		
+		log.puts "\n\t\t\tGet Statistics"
+		log.puts "============================================================="
+		
+		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get}
+		log.puts "Total Get Messages = #{get_logs.length}"
+
+		num_dropped = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
+		log.puts "num_dropped = #{num_dropped}"
+
+		num_success = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
+		log.puts "num_success= #{num_success}"
+
+		num_isolated= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
+		log.puts "num_isolated= #{num_isolated}"
+
+		num_lost = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
+		log.puts "num_lost= #{num_lost}"
+		
+		num_missing= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :missing}}
+		log.puts "num_missing= #{num_missing}"
+
+
+		log.puts "\t\t\tEvents per unit time"
+		log.puts "============================================================="
+		log.puts "time\tnum_events"
+		per_time = @stats[:events_per_unit_time].sort{|a,b| a[:time]<=>b[:time]}
+		per_time.each{|record|
+			log.puts "#{record[:time]}\t#{record[:num_events]}"
+		}
+
+		log.puts "\n"
+
+#		log.puts "\t\t\tEvent Histories"
+#		log.puts "============================================================="
 #		# the sort block sorts by the first timestamp in the event history
 #		@stats[:message_log].sort{|a,b| a[1][0][0]<=>b[1][0][0] }.each{|event_id, history|
-#			puts event_id
+#			log.puts event_id
 #			history.each{|time, event|
 #				print "t#{time}: #{event}. "
 #			}
-#			puts ""
+#			log.puts ""
 #		}
 
-		puts "\t\t\tAverages"
-		puts "============================================================="
-		
-		puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
-		puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
-		puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
-		puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
-		puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
-		puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
-		puts "avg_density\t\t\t#{@stats[:avg_density]}"
-		puts "density_updates\t\t\t#{@stats[:density_updates]}"
-		puts "Total messages\t\t\t#{@stats[:message_log].length}"
-
-		puts "\n\t\t\tPut Statistics"
-		puts "============================================================="
-		
-		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put}
-		puts "Total Put Messages = #{put_logs.length}"
-
-		num_dropped = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
-		puts "num_dropped = #{num_dropped}"
-
-		num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
-		puts "num_success= #{num_success}"
-
-		num_isolated= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
-		puts "num_isolated= #{num_isolated}"
-
-		num_lost = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
-		puts "num_lost= #{num_lost}"
-		
-		num_full= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
-		puts "num_full= #{num_full}"
-		
-		num_duplicate= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
-		puts "num_duplicate= #{num_duplicate}"
-		
-		num_retry= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
-		puts "num_retry= #{num_retry}"
-
-		puts "\n\t\t\tGet Statistics"
-		puts "============================================================="
-		
-		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get}
-		puts "Total Get Messages = #{get_logs.length}"
-
-		num_dropped = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
-		puts "num_dropped = #{num_dropped}"
-
-		num_success = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
-		puts "num_success= #{num_success}"
-
-		num_isolated= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
-		puts "num_isolated= #{num_isolated}"
-
-		num_lost = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
-		puts "num_lost= #{num_lost}"
-		
-		num_full= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
-		puts "num_full= #{num_full}"
-		
-		num_duplicate= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
-		puts "num_duplicate= #{num_duplicate}"
-		
-		num_retry= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
-		puts "num_retry= #{num_retry}"
-
+		log.close
 	end
 
 	def node_type node_class, *mixins

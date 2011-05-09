@@ -253,10 +253,10 @@ module LMSEvents
 			# NODE, not the simulator). 
 			if probe_out.type == :put
 				queue(@time+1, @current_event_id, :put_probe_reply, nodeID, 
-					  probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+					probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
 			else
 				queue(@time+1, @current_event_id, :get_probe_reply, nodeID, 
-					  probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
+					probe_out.initiator, msg = {:probe, probe_out, :hops, 0})  
 			end
 		else
 			# update the neighbors of the destination node, and then send

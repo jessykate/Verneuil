@@ -105,39 +105,6 @@ class Simulator
 	attr_reader :time, :Q, :stats
 
 	def print_stats
-		puts "\t\t\tAverages"
-		puts "============================================================="
-		
-		puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
-		puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
-		puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
-		puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
-		puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
-		puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
-		puts "avg_density\t\t\t#{@stats[:avg_density]}"
-		puts "density_updates\t\t\t#{@stats[:density_updates]}"
-
-		puts "\n\t\t\tPut Statistics"
-		puts "============================================================="
-
-		puts "lms_put_attempts\t\t#{@stats[:lms_put_attempts]}"
-		puts "lms_put_successes\t\t#{@stats[:lms_put_successes]}"
-		puts "lms_put_retries\t\t\t#{@stats[:lms_put_retries]}"
-		puts "lms_put_giveup\t\t\t#{@stats[:lms_put_giveup]}"
-		puts "lms_put_failures_isolated\t#{@stats[:lms_put_failures_isolated]}"
-		puts "lms_put_failures_full\t\t#{@stats[:lms_put_failures_full]}"
-		puts "lms_put_failures_duplicate\t#{@stats[:lms_put_failures_duplicate]}"
-		puts "lms_put_failures_lost\t\t#{@stats[:lms_put_failures_lost]}"
-
-		puts "\n\t\t\tGet Statistics"
-		puts "============================================================="
-
-		puts "lms_get_attempts\t\t#{@stats[:lms_get_attempts]}"
-		puts "lms_get_successes\t\t#{@stats[:lms_get_successes]}"
-		puts "lms_get_giveup\t\t\t#{@stats[:lms_get_giveup]}"
-		puts "lms_get_failures_isolated\t#{@stats[:lms_get_failures_isolated]}"
-		puts "lms_get_failures_missing\t#{@stats[:lms_get_failures_missing]}"
-		puts "lms_get_failures_lost\t\t#{@stats[:lms_get_failures_lost]}"
 
 		puts "\n\t\t\tRequest Details"
 		puts "============================================================="
@@ -170,14 +137,89 @@ class Simulator
 			puts ""
 		}
 
-#		puts ""
-#		@stats[:message_log].each{|event_id, history|
+		puts "\t\t\tEvents per unit time"
+		puts "============================================================="
+		pp @stats[:events_per_unit_time].sort{|a,b| a[:time]<=>b[:time]}
+		
+		puts ""
+
+#		puts "\t\t\tEvent Histories"
+#		puts "============================================================="
+#		# the sort block sorts by the first timestamp in the event history
+#		@stats[:message_log].sort{|a,b| a[1][0][0]<=>b[1][0][0] }.each{|event_id, history|
 #			puts event_id
 #			history.each{|time, event|
 #				print "t#{time}: #{event}. "
 #			}
 #			puts ""
 #		}
+
+		puts "\t\t\tAverages"
+		puts "============================================================="
+		
+		puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
+		puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
+		puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
+		puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
+		puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
+		puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
+		puts "avg_density\t\t\t#{@stats[:avg_density]}"
+		puts "density_updates\t\t\t#{@stats[:density_updates]}"
+		puts "Total messages\t\t\t#{@stats[:message_log].length}"
+
+		puts "\n\t\t\tPut Statistics"
+		puts "============================================================="
+		
+		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put}
+		puts "Total Put Messages = #{put_logs.length}"
+
+		num_dropped = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
+		puts "num_dropped = #{num_dropped}"
+
+		num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
+		puts "num_success= #{num_success}"
+
+		num_isolated= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
+		puts "num_isolated= #{num_isolated}"
+
+		num_lost = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
+		puts "num_lost= #{num_lost}"
+		
+		num_full= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
+		puts "num_full= #{num_full}"
+		
+		num_duplicate= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
+		puts "num_duplicate= #{num_duplicate}"
+		
+		num_retry= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
+		puts "num_retry= #{num_retry}"
+
+		puts "\n\t\t\tGet Statistics"
+		puts "============================================================="
+		
+		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get}
+		puts "Total Get Messages = #{get_logs.length}"
+
+		num_dropped = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
+		puts "num_dropped = #{num_dropped}"
+
+		num_success = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
+		puts "num_success= #{num_success}"
+
+		num_isolated= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
+		puts "num_isolated= #{num_isolated}"
+
+		num_lost = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
+		puts "num_lost= #{num_lost}"
+		
+		num_full= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
+		puts "num_full= #{num_full}"
+		
+		num_duplicate= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
+		puts "num_duplicate= #{num_duplicate}"
+		
+		num_retry= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
+		puts "num_retry= #{num_retry}"
 
 	end
 
@@ -260,14 +302,15 @@ class Simulator
 				num_join > num_part ? remaining = :addNodes : remaining = :removeNodes
 				send(remaining,  (num_join-num_part).abs)
 			end
-			puts "number of dead nodes = #{@dead_nodes.length}. list:"
-			pp @dead_nodes
-			puts "number of live nodes = #{@nodes.length}. list:"
-			pp @nodes.keys
+			puts "number of dead nodes = #{@dead_nodes.length}."
+			#pp @dead_nodes
+			puts "number of live nodes = #{@nodes.length}."
+			#pp @nodes.keys
 
 			# process the events scheduled for this time. events_now is a list
 			# of events, size >= 1.
 			until events_now.empty?
+				
 				event_name, event_args, event_id = events_now.shift	
 				puts "time #{time}: event #{event_name} with args #{event_args}"
 	

@@ -46,30 +46,7 @@ module LMS
 	# this will get called via super from the including class' initialize
 	# method (by construction)
 	def initialize()
-		@requests = {:put, [], :get, []}
-		def @requests.has_put_item? k,v
-			self[:put].each{|dict|
-				return true if dict[k] && dict[k] == v
-			}
-			return false
-		end
-		def @requests.has_get_item? k,v
-			self[:get].each{|dict|
-				return true if dict[k] && dict[k] == v
-			}
-			return false
-		end
-		def @requests.get_put_item k, v
-			self[:put].each{|dict|
-				return dict if dict[k] && dict[k] == v
-			}
-		end
-		def @requests.get_get_item k, v
-			self[:get].each{|dict|
-				return dict if dict[k] && dict[k] == v
-			}
-		end
-
+		@put_failures = {} 
 		@hashID= compute_hash(@nid)
 		super
 	end
@@ -91,7 +68,7 @@ module LMS
 		return receive_probe(probe, time)
 	end	
 
-	def put_init(key, item, time, replicas=false, rw= false)
+	def put_init(key, item, time, rw= false)
 		# assemble THE PROBE
 		# if this is a put request with a backoff factor due to failure, rw
 		# will contain a length twice the previous length that failed. else,
@@ -100,19 +77,7 @@ module LMS
 		probe = PUTProbe.new(item = item, initiator= @nid, key, hash_key, 
 							 walk_length = (rw || randWalkLength()), time)
 		# save some information about this active request
-		if @requests.has_put_item? hash_key, item
-			request = @requests.get_put_item(hash_key,item)
-			request[:replicas_sent] += 1
-		else
-			@requests[:put] << { hash_key => item,	
-				# replicas should never get set to false because we only arrive
-				# here if this is a new request. 
-				:replicas_wanted => replicas,
-				:replicas_sent => 1,
-				:failures => [], 
-				:successes => [], 
-			}
-		end
+		@put_failures[key.to_s + item.to_s] = 0 unless @put_failures.keys.include? key.to_s + item.to_s
 						
 		# sending to receive_probe first will initialize the random walk
 		return receive_probe(probe, time)
@@ -170,14 +135,15 @@ module LMS
 		# check if this node is the destination...
 		if dst == @nid
 			# see if it was a failure or success
-			request = @requests.get_put_item(probe.key, probe.item)
 			if probe.status == :failure
-				request[:failures] << {:nodeID =>probe.path.last, :reason => probe.error}
-				if request[:failures].length < @@max_failures
+				@put_failures[probe.orig_key.to_s + probe.item.to_s] += 1
+				current_failures = @put_failures[probe.orig_key.to_s + probe.item.to_s]
+				if current_failures < @@max_failures
 					# will go through put_init which calls receive_probe and
 					# then returns back probe object. also note that retries
 					# keep the original start time so as to accurately account
 					# for the extra time.
+
 					new_probe = put_init(probe.orig_key, probe.item, start_time = probe.start_time, rw = probe.total_walk_length*2)
 					response[:status] = :retry
 					response[:error] = probe.error
@@ -188,7 +154,6 @@ module LMS
 					response[:data] = {:probe, probe}
 				end		
 			else
-				request[:successes] << {:nodeID =>probe.path.last}
 				# uhh... we're done!
 				response[:status] = :success
 				response[:data] = {:probe, probe}
@@ -356,121 +321,5 @@ class PUTProbe < Probe
   end
 end
 
-#	def put(key, item, replicas)
-#		initiator = @nid
-#		successes = 0.0
-#		stats = {}
-#		(1..replicas).each {|r| 
-#			hash_string = @@hash_functions[rand(@@hash_functions.length)].to_s
-#			hash = computeHash(key + hash_string)
-#			walk_length = randWalkLength()
-#			probe = PUTProbe.new(item, initiator, hash, walk_length)
-#			success = false
-#			give_up = false
-#			while not success and not give_up
-#				last_node, probe = random_walk(probe)
-#				#prevent adding id to path twice        
-#				probe.pop_last() 
-#				node = last_node.deterministic_walk(probe)
-#
-#				if node.bufferFull? or (node.containsKey?(key) and 
-#										node.containsData?(item)) 
-#					probe.fail()
-#					if probe.getFailures >= @@max_failures
-#						give_up = true
-#					else
-#						probe.walk_length = walk_length * 2
-#						probe.clearPath()
-#						next
-#					end        
-#				else
-#					success = true
-#					successes += 1.0
-#					node.bufferAdd(key, item)
-#				end
-#			end
-#
-#			# log information about successes and failures, where the item was
-#			# deposited, and the path it took. 
-#			stats[r] = {'source' => initiator, 
-#						'failures' => probe.getFailures, 
-#						'success' => success, 
-#						'path' => probe.to_s, 
-#						'put_location'=> node.nid
-#					}
-#		}
-#
-#		return stats
-#	end
-#
-#	def get(k)
-#		walk_length = randWalkLength()
-#		path = []
-#		initiator = @nid
-#		hash = computeHash(k + @@hash_functions[rand(@@hash_functions.length)].to_s)
-#		probe = Probe.new(initiator, hash, walk_length, path)
-#		last_node, probe = random_walk(probe)
-#		probe.pop_last() #prevents adding id to path twice
-#		found_minimum = last_node.deterministic_walk(probe)
-#		# note that 'item' will be null if this LM does not have the item. 
-#		item = found_minimum.retrieve(k)
-#		# return probe so can print stats about path. 
-#		return item, probe
-#	end
-#
-#	def managedGet(k, max=100)
-#		# repeats the get request until it succeeds (or gets to 'max') and keeps
-#		# statistics on failures
-#		item_found = false
-#		tries = 0
-#		stats = {}
-#		until item_found or tries == max
-#			item_found, probe_data = get(k)
-#			cost = probe_data.getPath.length
-#			tries += 1
-#		end
-#		# recall = TP/(TP+FN). a 'FN' (false negative) is when get() falsely
-#		# returns nil. in this case the loop stops at TP=1 and thus tries is equal
-#		# to TP+FN. 
-#		if item_found
-#			recall = 1.0/(tries)
-#			stats["success"] = true
-#		else
-#			recall = 0
-#			stats["success"] = false
-#		end
-#		stats["tries"] = tries
-#		stats["max_tries"] = max
-#		return item_found, recall, stats
-#	end
-
-#	def random_walk(probe)
-#		neighbors = getNeighbors()
-#		#puts "in random_walk, #{@nid}'s neighbors = #{neighbors}"
-#		probe.walk()
-#		probe.add_to_path(@nid)
-#		if probe.getLength() > 0
-#			if neighbors.length > 0
-#				randomNode = neighbors[rand(neighbors.length)]
-#				return randomNode.random_walk(probe)
-#			else
-#				probe.walk_length = 0
-#				return self, probe
-#			end
-#		else
-#			return self, probe
-#		end
-#	end
-
-#	def deterministic_walk(probe)
-#		probe.add_to_path(@nid)
-#		# local minima for this item's key
-#		min_node = local_minimum(probe.getKey())
-#		if min_node.nid == @nid
-#			return self
-#		else
-#			return min_node.deterministic_walk(probe)
-#		end
-#	end
 
 

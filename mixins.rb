@@ -202,14 +202,14 @@ module LMSEvents
 				# then the probe failed because the node had no neighbors. gather
 				# some stats and discontinue this probe. 
 				@stats[:message_log][@current_event_id] << [@time, :isolated]
-				return
+			else
+				dst_node = probe.path.last
+				puts "got dst_node = #{dst_node}"
+				# all these events get queued at the same relative time since they
+				# happen for different nodes
+				queue(@time+1, @current_event_id, :update_nbrs, dst_node)
+				queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 			end
-			dst_node = probe.path.last
-			puts "got dst_node = #{dst_node}"
-			# all these events get queued at the same relative time since they
-			# happen for different nodes
-			queue(@time+1, @current_event_id, :update_nbrs, dst_node)
-			queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 		}
 	end
 
@@ -221,12 +221,12 @@ module LMSEvents
 			# then the probe failed because the node had no neighbors. gather
 			# some stats and discontinue this probe. 
 			@stats[:message_log][@current_event_id] << [@time, :isolated]
-			return
+		else
+			dst_node = probe.path.last
+			puts "got dst_node = #{dst_node}"
+			queue(@time+1, @current_event_id, :update_nbrs, dst_node)
+			queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 		end
-		dst_node = probe.path.last
-		puts "got dst_node = #{dst_node}"
-		queue(@time+1, @current_event_id, :update_nbrs, dst_node)
-		queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 	end
 
 	def send_probe(origin, nodeID, probe_in)

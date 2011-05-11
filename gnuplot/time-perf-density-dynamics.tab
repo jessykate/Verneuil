@@ -1,0 +1,24 @@
+# avg_neighbors: 9
+# density	avg_put_time (outbound only)
+
+0.01	47		
+0.05	30
+0.1		30
+0.2		28
+0.3		30
+0.4		30
+0.5		30
+0.7		30
+0.9		30
+
+# density	avg_get_time (outbound only)
+
+0.01	30
+0.05	24
+0.1		30
+0.2		26
+0.3		26
+0.4		30
+0.5		30
+0.7		30
+0.9		14

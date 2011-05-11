@@ -52,6 +52,7 @@ class Simulator
 		@dead_nodes = []
 		@time = 0
 		@current_event_id = nil
+		@title = "Simulation"
 
 		# keep a priority queue for system events. general format for each
 		# item: priority => [eventName, eventArgs]
@@ -109,8 +110,12 @@ class Simulator
 		randid = rand(36**8).to_s(36) 
 		log = File.open("logs/#{randid}.log", "w")
 
+		log.puts "\t\t\t#{@title}"
+		log.puts "============================================================="
+
 		log.puts "\t\t\tExperiment Results"
 		log.puts "\t\t\tJoin: #{@join}, Part: #{@part}, Move: #{@move}"
+		log.puts "\t\t\tWidth: #{@width}, Height: #{@height}, Num_nodes: #{@nodes.length}"
 #		log.puts "\t\t\t Node setup: broadcastRange: #{Node.broadcastRange}, broadcastMin: #{Node.broadcastMin}"
 #		log.puts "\t\t\t\tbufferMin: #{Node.bufferMin}, bufferRange: #{Node.bufferRange}"
 #		log.puts "\t\t\t LMS setup: hops: #{LMS.hops}, lambda_: #{LMS.lambda}"
@@ -227,8 +232,9 @@ class Simulator
 		@Q.insert(priority = time, event_id, data = [event_name, event_args])
 	end
 
-	def run(condition=true)
+	def run(title="Just another simulation", condition=true)
 		# condition must evaluate to a boolean
+		@title = title
 		while condition
 			time, events_now = @Q.next
 			break if events_now == false

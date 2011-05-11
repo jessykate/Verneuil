@@ -107,23 +107,6 @@ module LMS
 		else
 			# we need to find a smart neighbor to fwd to
 			response = smart_forward dst, probe, msg
-
-#			# doesn't really matter if we use random or deterministic choice
-#			# here since the nodes are not ordered in any way. but if the
-#			# local_min IS this node, but is NOT the destination, then pick a
-#			# random nbr instead. 
-#			min = local_minimum(dst)
-#			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
-#			if not min 
-#				#if we have no neighbors the message is basically dropped. 
-#				response[:status] = :failure
-#				probe.error = :isolated
-#				response[:data] = {:probe, probe}
-#			else
-#				response[:status] = :forward
-#				new_msg = {:probe, probe, :hops, msg[:hops]+1}
-#				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
-#			end
 		end
 		return response
 	end
@@ -167,31 +150,12 @@ module LMS
 			response = smart_forward dst, probe, msg
 		end
 		return response
-
-#			# doesn't really matter if we use random or deterministic choice
-#			# here since the nodes are not ordered in any way. but if the
-#			# local_min IS this node, but is NOT the destination, then pick a
-#			# random nbr instead. 
-#			min = local_minimum(dst)
-#			min == @nid ? next_hop = @neighbors[rand(@neighbors.length)] : next_hop = min
-#			if not min 
-#				#if we have no neighbors the message is basically dropped. 
-#				response[:status] = :failure
-#				probe.error = :isolated
-#				response[:data] = probe
-#			else
-#				response[:status] = :forward
-#				new_msg = {:probe, probe, :hops, msg[:hops]+1}
-#				response[:data] = {:dst, dst, :msg, new_msg, :next_hop, next_hop}
-#			end
-#		end
-#		return response
 	end
 
 	def smart_forward dst, probe, msg
 		response = {}
 		if @neighbors.empty?
-			#if we have no neighbors the message is basically dropped. 
+			#if we have no neighbors the message is dropped. 
 			response[:status] = :failure
 			probe.error = :isolated
 			response[:data] = probe
@@ -200,6 +164,12 @@ module LMS
 			# in the path. basically, the 'closer' in the path we can get to
 			# the source, the better. so slice the probe path wherever this
 			# node appears, then search for neighbors `closer' to the source. 
+			response[:status] = :forward
+			new_msg = {:probe, probe, :hops, msg[:hops]+1}
+			# initialize response with the worst case next_hop = a random neighbor
+			rnd_nbr = @neighbors[rand(@neighbors.length)]
+			response[:data] = {:dst, dst, :msg, new_msg, :next_hop, rnd_nbr}
+			
 			way_back = [dst]+probe.path[0..(probe.path.index(@nid) || -1)]
 			puts "at node #{@nid}"
 			puts "neighbors"
@@ -209,13 +179,12 @@ module LMS
 			puts "way_back"
 			pp way_back
 			way_back.each {|step| # will start at the goal and back off 
+				# if a better next step is found, replace next_hop with that
+				# instead. 
 				puts "checking path list for #{step}"
 				if @neighbors.include? step
 					puts "neighbor list included #{step}"
-					gets
-					response[:status] = :forward
-					new_msg = {:probe, probe, :hops, msg[:hops]+1}
-					response[:data] = {:dst, dst, :msg, new_msg, :next_hop, step}
+					response[:data][:next_hop] = step
 					break
 				end
 			}

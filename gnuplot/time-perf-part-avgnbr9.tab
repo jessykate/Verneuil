@@ -1,0 +1,17 @@
+# avg_neighbors: 9
+# prob_move	avg_put_time (outbound only)
+
+0.01	30 
+0.02	20 
+0.03	26
+0.04	24
+0.05	12
+
+# prob_part	avg_get_time
+
+0.01	0
+0.02	0
+0.03	0
+0.04	0
+0.05	0
+

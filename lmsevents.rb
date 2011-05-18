@@ -34,8 +34,11 @@ module LMSEvents
 	def put_init(nodeID, tag, message, replicas)
 		puts "@time=#{@time} in #{__method__}"
 		replicas.times {
+			@current_event_id = Simulator.new_event_id
 			@stats[:lms_put_attempts] += 1
 			probe = @nodes[nodeID].put_init(tag, message, @time)
+			# this is SO completelly the wrong place to put this. 
+			@stats[:message_log][@current_event_id] = [[@time, :put_init],]
 			if probe == :isolated
 				# then the probe failed because the node had no neighbors. gather
 				# some stats and discontinue this probe. 
@@ -44,7 +47,9 @@ module LMSEvents
 				dst_node = probe.path.last
 				puts "got dst_node = #{dst_node}"
 				# all these events get queued at the same relative time since they
-				# happen for different nodes
+				# happen at different nodes. EACH put request should have a
+				# distinct ID for tracking purposes. 
+				event_id = Simulator.new_event_id
 				queue(@time+1, @current_event_id, :update_nbrs, dst_node)
 				queue(@time+2, @current_event_id, :send_probe, nodeID, dst_node, probe)
 			end
@@ -53,8 +58,11 @@ module LMSEvents
 
 	def get_init(nodeID, tag)
 		puts "@time=#{@time} in #{__method__}"
+		@current_event_id = Simulator.new_event_id
 		@stats[:lms_get_attempts] += 1
 		probe = @nodes[nodeID].get_init(tag, @time)
+		# this is SO completelly the wrong place to put this. 
+		@stats[:message_log][@current_event_id] = [[@time, :get_init],]
 		if probe == :isolated
 			# then the probe failed because the node had no neighbors. gather
 			# some stats and discontinue this probe. 
@@ -106,15 +114,15 @@ module LMSEvents
 	def get_probe_reply nodeID, dst, msg 
 		# find the way back to the original node
 
-		verify_neighbors(nodeID, dst)
-		
 		response = @nodes[nodeID].forward_get_reply(dst, msg, @time)
 		case response[:status]
 		when :forward
 			next_hop = response[:data][:next_hop]
+			verify_neighbors(nodeID, next_hop)
 			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
 			queue(@time+2, @current_event_id, :get_probe_reply, next_hop, 
 				  response[:data][:dst], response[:data][:msg] )
+			puts "event #{@current_event_id} in GET forward mode. current time: #{@time}"
 		when :failure
 			@stats[:message_log][@current_event_id] << [@time, response[:error]]
 		when :success
@@ -123,8 +131,10 @@ module LMSEvents
 			@stats[:avg_get_time] = Float(@stats[:lms_get_successes]*@stats[:avg_get_time]+ 
 										  delta_t)/Float(@stats[:lms_get_successes]+1)
 			delta_t_reply = @time - response[:data][:probe].end_time
-			@stats[:avg_get_reply_time] = Float(@stats[:lms_get_successes]*@stats[:avg_get_reply_time]+ 
+			@stats[:message_log][@current_event_id] << [@time, "reply time = #{delta_t_reply}"]
+			@stats[:avg_get_reply_time] = (Float(@stats[:lms_get_successes])*Float(@stats[:avg_get_reply_time])+ 
 										  delta_t_reply)/Float(@stats[:lms_get_successes]+1)
+			@stats[:lms_get_successes] += 1 
 			puts "item retrieved:"
 			response[:data][:probe].item.each{|tag, location_list|
 				puts "#{tag}: "
@@ -136,42 +146,42 @@ module LMSEvents
 		unless response[:status] == :forward or response[:error] == :lost 
 			location_found= response[:data][:probe].path.last
 			key_searched= response[:data][:probe].orig_key
-			#puts location_found
-			#puts key_searched
-			#gets
 			@stats[:get_locations][key_searched] << location_found
 		end
 	end
 
 	def put_probe_reply nodeID, dst, msg 
 		# find the way back to the original node
-
-		verify_neighbors(nodeID, dst)
 		
 		response = @nodes[nodeID].forward_put_reply(dst, msg, @time)
 		case response[:status]
 		when :forward
 			next_hop = response[:data][:next_hop]
+			verify_neighbors(nodeID, next_hop)
 			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
 			queue(@time+2, @current_event_id, :put_probe_reply, next_hop, 
 				  response[:data][:dst], response[:data][:msg] )
+			puts "event #{@current_event_id} in PUT forward mode. current time: #{@time}"
+		when :retry 
+			next_hop = response[:data][:next_hop]
+			verify_neighbors(nodeID, next_hop)
+			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
+			@stats[:message_log][@current_event_id] << [@time, :retry]
+			queue(@time+2, @current_event_id, :send_probe, nodeID, next_hop, response[:data][:new_probe])
 		when :failure
 			# record reason for failure in both cases. then retry if that's
 			# what was specified. 
 			@stats[:message_log][@current_event_id] << [@time, response[:error]]
-		when :retry 
-			next_hop = response[:data][:next_hop]
-			queue(@time+1, @current_event_id, :update_nbrs, next_hop) 
-			@stats[:message_log][@current_event_id] << [@time, :retry]
-			queue(@time+2, @current_event_id, :send_probe, nodeID, next_hop, response[:data][:new_probe])
 		when :success
 			@stats[:message_log][@current_event_id] << [@time, :success]
 			delta_t = response[:data][:probe].end_time - response[:data][:probe].start_time
 			@stats[:avg_put_time] = Float(@stats[:lms_put_successes]*@stats[:avg_put_time]+ 
 										  delta_t)/Float(@stats[:lms_put_successes]+1)
 			delta_t_reply = @time - response[:data][:probe].end_time
-			@stats[:avg_put_reply_time] = Float(@stats[:lms_put_successes]*@stats[:avg_put_reply_time]+ 
+			@stats[:message_log][@current_event_id] << [@time, "reply time = #{delta_t_reply}"]
+			@stats[:avg_put_reply_time] = (Float(@stats[:lms_put_successes])*Float(@stats[:avg_put_reply_time])+ 
 										  delta_t_reply)/Float(@stats[:lms_put_successes]+1)
+			@stats[:lms_put_successes] += 1 
 			location_stored = response[:data][:probe].path.last
 			key_stored = response[:data][:probe].orig_key
 			@stats[:put_locations][key_stored] << location_stored

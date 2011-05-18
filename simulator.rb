@@ -9,44 +9,48 @@ class InvalidProbability < RuntimeError; end
 class InvalidDistance < RuntimeError; end
 class DeadNodeError < RuntimeError; end
 
-class PriorityQueue
-	def initialize
-		@q = Hash.new {|hash, key| hash[key] = []}
-		def @q.to_s 
-			s = ""
-			self.each{|k,v|
-				s += "#{k}: #{v} "
-			}
-			return s
+class Simulator
+	
+	def self.new_event_id
+		rand(36**8).to_s(36) 
+	end
+
+	class PriorityQueue
+		def initialize
+			@q = Hash.new {|hash, key| hash[key] = []}
+			def @q.to_s 
+				s = ""
+				self.each{|k,v|
+					s += "#{k}: #{v} "
+				}
+				return s
+			end
+		end
+
+		def insert(priority, event_id, data)
+			# lower priority is HIGHER
+
+			# neat way to generate a short uniq id (uses base 36), from
+			# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
+			event_id = Simulator.new_event_id unless event_id
+			# each event contains event_name, event_args, event_id
+			@q[priority] << data + [event_id]
+		end
+
+		def next
+			# events with the lowest (soonest) time are removed first. 
+			return [false,false] if @q.empty?
+			next_events = @q.sort[0]
+			@q.delete(next_events[0]) #delete by key value
+			# returns false if @q is empty. 
+			return next_events 
+		end
+
+		def to_s
+			return "#{@q.length} items: { #{@q.to_s} }"
 		end
 	end
 
-	def insert(priority, event_id, data)
-		# lower priority is HIGHER
-
-		# neat way to generate a short uniq id (uses base 36), from
-		# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
-		event_id = rand(36**8).to_s(36) unless event_id
-		# each event contains event_name, event_args, event_id
-		@q[priority] << data + [event_id]
-	end
-
-	def next
-		# events with the lowest (soonest) time are removed first. 
-		return [false,false] if @q.empty?
-		next_events = @q.sort[0]
-		@q.delete(next_events[0]) #delete by key value
-		# returns false if @q is empty. 
-		return next_events 
-	end
-
-	def to_s
-		return "#{@q.length} items: { #{@q.to_s} }"
-	end
-end
-
-class Simulator
-	
 	def initialize()
 		@nodes = Hash.new {|hash, key| node_moved_or_died(key) if @dead_nodes.include? key } # nid => node
 		@dead_nodes = []
@@ -75,20 +79,9 @@ class Simulator
 
 			:lms_put_attempts, 0, 
 			:lms_put_successes, 0, 
-			:lms_put_retries, 0,
-			:lms_put_giveup, 0,
-			# includes failure data for retries as well. 
-			:lms_put_failures_isolated, 0,
-			:lms_put_failures_full, 0,
-			:lms_put_failures_duplicate, 0,
-			:lms_put_failures_lost, 0,
 
 			:lms_get_attempts, 0,
 			:lms_get_successes, 0, 
-			:lms_get_giveup, 0,
-			:lms_get_failures_isolated, 0,
-			:lms_get_failures_missing, 0,
-			:lms_get_failures_lost, 0,
 			
 			# a record of locations where items were stored and attempts were
 			# made to retrieve. 
@@ -98,8 +91,6 @@ class Simulator
 			# for each message, log {event_id => {start_time, end_time, history}
 			# history is one of success, dropped, lost, full, duplicate
 			:message_log, {},
-			
-			:messages_expected, 0, :messages_present, 0,
 		}
 
 	end	
@@ -141,7 +132,7 @@ class Simulator
 		log.puts "\n\t\t\tPut Statistics"
 		log.puts "============================================================="
 		
-		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put}
+		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put_init}
 		log.puts "Total Put Messages = #{put_logs.length}"
 
 		num_dropped = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
@@ -169,7 +160,7 @@ class Simulator
 		log.puts "\n\t\t\tGet Statistics"
 		log.puts "============================================================="
 		
-		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get}
+		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get_init}
 		log.puts "Total Get Messages = #{get_logs.length}"
 
 		num_dropped = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
@@ -198,16 +189,16 @@ class Simulator
 
 		log.puts "\n"
 
-#		log.puts "\t\t\tEvent Histories"
-#		log.puts "============================================================="
-#		# the sort block sorts by the first timestamp in the event history
-#		@stats[:message_log].sort{|a,b| a[1][0][0]<=>b[1][0][0] }.each{|event_id, history|
-#			log.puts event_id
-#			history.each{|time, event|
-#				print "t#{time}: #{event}. "
-#			}
-#			log.puts ""
-#		}
+		log.puts "\t\t\tEvent Histories"
+		log.puts "============================================================="
+		# the sort block sorts by the first timestamp in the event history
+		@stats[:message_log].sort{|a,b| a[1][0][0]<=>b[1][0][0] }.each{|event_id, history|
+			log.puts event_id
+			history.each{|time, event|
+				log.puts "\tt#{time}: #{event}. "
+			}
+			log.puts ""
+		}
 
 		log.close
 	end
@@ -329,6 +320,7 @@ class Simulator
 		# update statistics and drop the message
 		@stats[:message_log][@current_event_id] << [@time, :dropped]
 		puts "message dropped. punting"
+		gets
 		throw :message_dropped
 	end
 
@@ -379,6 +371,13 @@ class Simulator
 	end
 	
 	def verify_neighbors(origin, destination)
+		nbrs = get_physical_nbrs origin
+		puts "origin: #{origin}. destination: #{destination}. nrbs of origin:"
+		puts nbrs
+		puts "actual stored neighbours:"
+		puts @nodes[origin].neighbors
+		puts "last event"
+		puts @stats[:message_log][@current_event_id][-1]
 		node_moved_or_died destination unless 
 		get_physical_nbrs(origin).include? destination or 
 		origin == destination

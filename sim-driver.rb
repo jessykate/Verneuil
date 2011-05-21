@@ -1,156 +1,97 @@
 #!/usr/bin/ruby
-require 'lmsevents'
-require 'uniform-disk'
-require 'simulator'
-require 'pp'
 
-class Simulator
-	include UDSTopology 
-	include LMSEvents
-end
+require 'sim-util'
 
-# SIM =========================================
-# movement probability, no join or part
+experiment_description = "join and part"
+params = {
+	# LMS parameters,
+	:hops => 1,
+	:lambda_ => 256,
+	:max_failures => 5,
+	:randWalkRange => 10,
+	:randWalkMin => 25,
+	:reply_ttl => 1000,
 
-LMS.setup hops=1, lambda_=256, max_failures=5, randWalkRange=50, randWalkMin=5, reply_ttl=1000
-Node.setup broadcastRange=5, broadcastMin=5, bufferRange=10, bufferMin=50
+	# node parameters,
+	:broadcastRange => 5,
+	:braodcastMin => 15,
+	:bufferRange => 10,
+	:bufferMin => 10,
 
-#[0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
-
-movement_probabilities = [0.0,]# 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0] 
-movement_probabilities.each {|p|
-
-	sim = Simulator.new
-	sim.uds_init width = 100, height = 10
-	sim.node_type Node, LMS
-
-	sim.queue(time=0, event_id=nil, :dynamics, move=p, join=0.0, part=0.0)
-	sim.queue(time=1, event_id=nil, :addNodes, 500)
-
-	10.times {|t|
-		20.times {|n| 
-			sim.queue(time=2+n+t, event_id=nil, :put, tag = "tests", msg = "hello 2 #{t}.#{n}", replicas=5)
-		}
-	}
-
-	# issue 200 GET queries, 20 at a time, over 10 time periods 
-	10.times {|t|
-		20.times {|n|
-			sim.queue(time=10+t+n, event_id=nil, :get, tag = "tests")
-		
-		}
-	}
-
-	# should store delta time between put and retrieval...
-	sim.run title="small broadcast radius"
-	sim.print_stats
+	# simulation dynamics,
+	:width => 100,
+	:height => 100,
+	:move => 0.5, # THIS IS THE CONTROLLED VARIABLE
+	:join => false,
+	:part => false,
+	:initial_nodes => 200,
+	:num_puts => 200,
+	:num_gets => 200,
+	:wait_time => 10,
 }
 
-exit 
+join_part_probabilities = [0.0, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5]
+simple_experiment_set experiment_description, params, :join_part, join_part_probabilities
 
-# SIM =========================================
-# increase join/part probability
+experiment_description = "movement only"
+params = {
+	# LMS parameters,
+	:hops => 1,
+	:lambda_ => 256,
+	:max_failures => 5,
+	:randWalkRange => 10,
+	:randWalkMin => 25,
+	:reply_ttl => 1000,
 
-LMS.setup hops=1, lambda_=256, max_failures=5, randWalkRange=10, randWalkMin=5, reply_ttl=1000
-Node.setup broadcastRange=2, broadcastMin=3, bufferRange=10, bufferMin=50
+	# node parameters,
+	:broadcastRange => 5,
+	:braodcastMin => 15,
+	:bufferRange => 10,
+	:bufferMin => 10,
 
-part_probs = [0.01, 0.02, 0.03, 0.04, 0.05]
-part_probs.each{|p|
-	sim = Simulator.new
-	sim.uds_init width = 100, height = 100
-	sim.node_type Node, LMS
-
-	sim.queue(time=0, event_id=nil, :dynamics, move=0.5, join=p, part=p)
-	sim.queue(time=1, event_id=nil, :addNodes, 200)
-
-	10.times {|t|
-		20.times {|n| 
-			sim.queue(time=2+n+t, event_id=nil, :put, tag = "tests", msg = "hello 2 #{t}.#{n}", replicas=5)
-		}
-	}
-
-	10.times {|t|
-		20.times {|n|
-			sim.queue(time=1000+t+n, event_id=nil, :get, tag = "tests")
-		
-		}
-	}
-
-	# should store delta time between put and retrieval...
-	sim.run title="network density scaling"
-	sim.print_stats
+	# simulation dynamics,
+	:width => 100,
+	:height => 100,
+	:move => false, # THIS IS THE CONTROLLED VARIABLE
+	:join => 0,
+	:part => 0,
+	:initial_nodes => 200,
+	:num_puts => 200,
+	:num_gets => 200,
+	:wait_time => 10,
 }
 
-exit
+movement_probabilities = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0] 
+simple_experiment_set experiment_description, params, :move, movement_probabilities
 
-# SIM =========================================
-# scale the network density
+experiment_description = "density"
+params = {
+	# LMS parameters,
+	:hops => 1,
+	:lambda_ => 256,
+	:max_failures => 5,
+	:randWalkRange => 10,
+	:randWalkMin => 25,
+	:reply_ttl => 1000,
 
-LMS.setup hops=1, lambda_=256, max_failures=5, randWalkRange=10, randWalkMin=5, reply_ttl=1000
-Node.setup broadcastRange=5, broadcastMin=10, bufferRange=10, bufferMin=50
+	# node parameters,
+	:broadcastRange => 5,
+	:braodcastMin => 15,
+	:bufferRange => 10,
+	:bufferMin => 10,
 
-#[0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
-
-num_nodes = [10, 50, 100, 200, 300, 400, 500, 700, 900]
-num_nodes.each{|n|
-	sim = Simulator.new
-	sim.uds_init width = 100, height = 10
-	sim.node_type Node, LMS
-
-	sim.queue(time=0, event_id=nil, :dynamics, move=0.5, join=0.0, part=0.0)
-	sim.queue(time=1, event_id=nil, :addNodes, n)
-
-	### percentage of nbrs changing and correlation with/probability of failure. TODO
-
-	10.times {|t|
-		20.times {|n| 
-			sim.queue(time=2+n+t, event_id=nil, :put, tag = "tests", msg = "hello 2 #{t}.#{n}", replicas=5)
-		}
-	}
-
-	# issue 200 GET queries, 20 at a time, over 10 time periods 
-	10.times {|t|
-		20.times {|n|
-			sim.queue(time=1000+t+n, event_id=nil, :get, tag = "tests")
-		
-		}
-	}
-
-	# should store delta time between put and retrieval...
-	sim.run title="network density scaling"
-	sim.print_stats
+	# simulation dynamics,
+	:width => 100,
+	:height => 100,
+	:move => 0.5, # THIS IS THE CONTROLLED VARIABLE
+	:join => 0,
+	:part => 0,
+	:initial_nodes => false,
+	:num_puts => 200,
+	:num_gets => 200,
+	:wait_time => 10,
 }
 
-exit 
-
-# TOY =========================================
-
-# want something where broadcast radius is around the avg. distance between nodes. 
-
-LMS.setup hops=1, lambda_=256, max_failures=5, randWalkRange=10, randWalkMin=10, reply_ttl=1000
-Node.setup broadcastRange=2, broadcastMin=10, bufferRange=3, bufferMin=5
-
-movement_probabilities = [0.95, 0.85,0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.8, 0.9] 
-movement_probabilities.each {|p|
-	sim = Simulator.new
-	sim.uds_init width = 100, height = 100
-	sim.node_type Node, LMS
-
-	sim.queue(time=0, event_id=nil, :dynamics, move=p, join=0.0, part=0.0)
-	sim.queue(time=1, event_id=nil, :addNodes, 50)
-
-	10.times {|n| 
-		sim.queue(time=2, event_id=nil, :put, tag = "tests", msg = "hello #{n}", replicas=5)
-	}
-	100.times {|n|
-		sim.queue(time=115+n, event_id=nil, :get, tag = "tests")
-	}
-
-	#sim.queue(0, event_id=nil, acts_on=nil, :dynamics, move=0.2, join=0.2, part=0.1)
-
-	sim.run
-	sim.print_stats
-}
-
-exit
+num_nodes = [10, 20, 50, 100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000] 
+simple_experiment_set experiment_description, params, :num_nodes, num_nodes
 

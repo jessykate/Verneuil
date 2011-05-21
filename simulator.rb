@@ -52,8 +52,8 @@ class Simulator
 	end
 
 	def initialize()
-		@nodes = Hash.new {|hash, key| node_moved_or_died(key) if @dead_nodes.include? key } # nid => node
 		@dead_nodes = []
+		@nodes = Hash.new {|hash, key| node_moved_or_died(key) if @dead_nodes.include? key } # nid => node
 		@time = 0
 		@current_event_id = nil
 		@title = "Simulation"
@@ -69,6 +69,7 @@ class Simulator
 		@join = 0.0
 
 		# fun, fun statistics. 
+		# TODO this should be in lmsevents
 		@stats = {
 			:events_per_unit_time, [],
 
@@ -76,7 +77,7 @@ class Simulator
 			:avg_put_reply_time, 0, :avg_get_reply_time, 0, 
 			:avg_neighbors,0, :neighbor_updates, 0,
 		   	:avg_density, 0, :density_updates, 0,
-
+			:avg_nbr_percent_change, 0,
 			:lms_put_attempts, 0, 
 			:lms_put_successes, 0, 
 
@@ -95,113 +96,6 @@ class Simulator
 
 	end	
 	attr_reader :time, :Q, :stats
-
-	def print_stats
-
-		randid = rand(36**8).to_s(36) 
-		log = File.open("logs/#{randid}.log", "w")
-
-		log.puts "\t\t\t#{@title}"
-		log.puts "============================================================="
-
-		log.puts "\t\t\tExperiment Results"
-		log.puts "\t\t\tJoin: #{@join}, Part: #{@part}, Move: #{@move}"
-		log.puts "\t\t\tWidth: #{@width}, Height: #{@height}, Num_nodes: #{@nodes.length}"
-#		log.puts "\t\t\t Node setup: broadcastRange: #{Node.broadcastRange}, broadcastMin: #{Node.broadcastMin}"
-#		log.puts "\t\t\t\tbufferMin: #{Node.bufferMin}, bufferRange: #{Node.bufferRange}"
-#		log.puts "\t\t\t LMS setup: hops: #{LMS.hops}, lambda_: #{LMS.lambda}"
-#		log.puts "\t\t\t\tmax_failures: #{LMS.max_failures}, randWalkRange: #{LMS.randWalkRange}" 
-#		log.puts "\t\t\t\trandWalkMin: #{LMS.randWalkMin}, reply_ttl: #LMS.reply_ttl}"
-
-		log.puts "============================================================="
-		
-
-		log.puts "\t\t\tAverages"
-		log.puts "============================================================="
-		
-		log.puts "avg_put_time\t\t\t#{@stats[:avg_put_time]}"
-		log.puts "avg_put_reply_time\t\t#{@stats[:avg_put_reply_time]}"
-		log.puts "avg_get_time\t\t\t#{@stats[:avg_get_time]}"
-		log.puts "avg_get_reply_time\t\t#{@stats[:avg_get_reply_time]}"
-		log.puts "avg_neighbors\t\t\t#{@stats[:avg_neighbors]}"
-		log.puts "neighbor updates\t\t#{@stats[:neighbor_updates]}"
-		log.puts "avg_density\t\t\t#{@stats[:avg_density]}"
-		log.puts "Total messages\t\t\t#{@stats[:message_log].length}"
-
-		
-		log.puts "\n\t\t\tPut Statistics"
-		log.puts "============================================================="
-		
-		put_logs = @stats[:message_log].reject{|k,v| v[0][1] != :put_init}
-		log.puts "Total Put Messages = #{put_logs.length}"
-
-		num_dropped = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
-		log.puts "num_dropped = #{num_dropped}"
-
-		num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
-		log.puts "num_success= #{num_success}"
-
-		num_isolated= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
-		log.puts "num_isolated= #{num_isolated}"
-
-		num_lost = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
-		log.puts "num_lost= #{num_lost}"
-		
-		num_full= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :full}}
-		log.puts "num_full= #{num_full}"
-		
-		num_duplicate= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :duplicate}}
-		log.puts "num_duplicate= #{num_duplicate}"
-		
-		num_retry= put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :retry}}
-		log.puts "num_retry= #{num_retry}"
-
-		
-		log.puts "\n\t\t\tGet Statistics"
-		log.puts "============================================================="
-		
-		get_logs = @stats[:message_log].reject{|k,v| v[0][1] != :get_init}
-		log.puts "Total Get Messages = #{get_logs.length}"
-
-		num_dropped = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :dropped}}
-		log.puts "num_dropped = #{num_dropped}"
-
-		num_success = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
-		log.puts "num_success= #{num_success}"
-
-		num_isolated= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :isolated}}
-		log.puts "num_isolated= #{num_isolated}"
-
-		num_lost = get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :lost}}
-		log.puts "num_lost= #{num_lost}"
-		
-		num_missing= get_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :missing}}
-		log.puts "num_missing= #{num_missing}"
-
-
-		log.puts "\t\t\tEvents per unit time"
-		log.puts "============================================================="
-		log.puts "time\tnum_events"
-		per_time = @stats[:events_per_unit_time].sort{|a,b| a[:time]<=>b[:time]}
-		per_time.each{|record|
-			log.puts "#{record[:time]}\t#{record[:num_events]}"
-		}
-
-		log.puts "\n"
-
-		log.puts "\t\t\tEvent Histories"
-		log.puts "============================================================="
-		# the sort block sorts by the first timestamp in the event history
-		@stats[:message_log].sort{|a,b| a[1][0][0]<=>b[1][0][0] }.each{|event_id, history|
-			log.puts event_id
-			history.each{|time, event|
-				log.puts "\tt#{time}: #{event}. "
-			}
-			log.puts ""
-		}
-
-		log.close
-	end
 
 	def node_type node_class, *mixins
 		mixins.each{|mixin|
@@ -320,7 +214,6 @@ class Simulator
 		# update statistics and drop the message
 		@stats[:message_log][@current_event_id] << [@time, :dropped]
 		puts "message dropped. punting"
-		gets
 		throw :message_dropped
 	end
 
@@ -358,14 +251,26 @@ class Simulator
 	end
 
 	def update_nbrs(nodeID)
+		# update the nbrs of nodeID
 		# NOTE only suport 1-hop neighborhoods right now
 		puts "@time=#{@time} in #{__method__}"
-		# update the nbrs of nodeID
 		puts "updating nbrs for node #{nodeID}"
 		nbrs = get_physical_nbrs(nodeID)
+
+		# store the average number of neighbours 
 		@stats[:avg_neighbors] = Float((@stats[:avg_neighbors]*@stats[:neighbor_updates]) + 
 								nbrs.length)/Float(@stats[:neighbor_updates]+1)
+
+		# store the percent neighbour change
+		new = (@nodes[nodeID].neighbors - nbrs)
+		percent_change = Float(new.length)/Float(@nodes[nodeID].neighbors.length)
+		@stats[:avg_nbr_percent_change] = Float((@stats[:avg_nbr_percent_change]*@stats[:neighbor_updates]) + 
+								percent_change)/Float(@stats[:neighbor_updates]+1)
+		
+		# NOW update the count of neighbour updates
 		@stats[:neighbor_updates] += 1
+
+		# finally update the neighbor list
 		@nodes[nodeID].update_nbrs = nbrs
 		puts "updated neighbors for node #{nodeID} with list #{nbrs}"
 	end

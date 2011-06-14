@@ -1,7 +1,6 @@
 require 'node'
 require 'lms'
 
-
 class NonLinearTimeError < RuntimeError; end
 class UnknownEventError < RuntimeError; end
 class InvalidNodeID < RuntimeError; end
@@ -12,6 +11,8 @@ class DeadNodeError < RuntimeError; end
 class Simulator
 	
 	def self.new_event_id
+		# neat way to generate a short uniq id (uses base 36), from
+		# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
 		rand(36**8).to_s(36) 
 	end
 
@@ -30,8 +31,6 @@ class Simulator
 		def insert(priority, event_id, data)
 			# lower priority is HIGHER
 
-			# neat way to generate a short uniq id (uses base 36), from
-			# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
 			event_id = Simulator.new_event_id unless event_id
 			# each event contains event_name, event_args, event_id
 			@q[priority] << data + [event_id]
@@ -39,10 +38,10 @@ class Simulator
 
 		def next
 			# events with the lowest (soonest) time are removed first. 
+			# returns false if @q is empty. 
 			return [false,false] if @q.empty?
 			next_events = @q.sort[0]
 			@q.delete(next_events[0]) #delete by key value
-			# returns false if @q is empty. 
 			return next_events 
 		end
 
@@ -69,28 +68,32 @@ class Simulator
 		@join = 0.0
 
 		# fun, fun statistics. 
-		# TODO this should be in lmsevents
 		@stats = {
 			:events_per_unit_time, [],
 
-			:avg_put_time, 0, :avg_get_time, 0, 
-			:avg_put_reply_time, 0, :avg_get_reply_time, 0, 
 			:avg_neighbors,0, :neighbor_updates, 0,
 		   	:avg_density, 0, :density_updates, 0,
 			:avg_nbr_percent_change, 0,
+
+			# TODO these should be in lmsevents
 			:lms_put_attempts, 0, 
 			:lms_put_successes, 0, 
-
+			:avg_put_time, 0, :avg_get_time, 0, 
+			:avg_put_reply_time, 0, :avg_get_reply_time, 0, 
 			:lms_get_attempts, 0,
 			:lms_get_successes, 0, 
 			
 			# a record of locations where items were stored and attempts were
-			# made to retrieve. 
+			# made to retrieve, respectively
 			:put_locations, Hash.new {|hash, key| hash[key] = []},
 			:get_locations, Hash.new {|hash, key| hash[key] = []},
 			
-			# for each message, log {event_id => {start_time, end_time, history}
-			# history is one of success, dropped, lost, full, duplicate
+			# events are comprised of many secondary events which get queued.
+			# events are related by an event_id which is passed along with it
+			# through its history. that history is logged here, keyed on
+			# event_id. each event_id points to a list of (time, event) tuples
+			# that describe the life of that activity in the simulator.  
+			# {event_id => [[time_i, event], ...,[time_n, event]]}
 			:message_log, {},
 		}
 
@@ -98,6 +101,8 @@ class Simulator
 	attr_reader :time, :Q, :stats
 
 	def node_type node_class, *mixins
+		# specify a generic node class with one or more mixins, which implement
+		# the protocol(s) to be tested. 
 		mixins.each{|mixin|
 			node_class.class_eval {
 				include mixin
@@ -117,19 +122,27 @@ class Simulator
 		@Q.insert(priority = time, event_id, data = [event_name, event_args])
 	end
 
-	def run(title="Just another simulation", condition=true)
-		# condition must evaluate to a boolean
+	def queue_periodic event_name, delta_t
+	   # a method to call every delta_t time units
+		@periodic_events << [event_name, delta_t]
+	end
+
+
+	def run(title="Just another simulation", condition=false)
+		# the user can specify some custom termination condition (must evaluate
+		# to a boolean), else simulator will run until all the event have been
+		# exhausted. 
 		@title = title
-		while condition
+		unless condition
 			time, events_now = @Q.next
 			break if events_now == false
 			raise NonLinearTimeError if time < @time
 
-			@stats[:events_per_unit_time] << {:time, @time, :num_events, events_now.length}
 			# update the time
 			@delta_t = time - @time
 			@time = time
-			
+			@stats[:events_per_unit_time] << {:time, @time, :num_events, events_now.length}
+
 			# each time step, independent of what has been scheduled, we update
 			# node positions and network membership according to the values set
 			# up in the dynamics() method. 
@@ -178,12 +191,16 @@ class Simulator
 				send(remaining,  (num_join-num_part).abs)
 			end
 			puts "number of dead nodes = #{@dead_nodes.length}."
-			#pp @dead_nodes
 			puts "number of live nodes = #{@nodes.length}."
-			#pp @nodes.keys
+
+			# call any regularly scheduled events. 
+			@periodic_events.each {|event, interval|
+				send(event) if @time % interval == 0
+			}
 
 			# process the events scheduled for this time. events_now is a list
-			# of events, size >= 1.
+			# of events, size >= 1 (there are typically multiple events at the
+			# same time). 
 			until events_now.empty?
 				
 				event_name, event_args, event_id = events_now.shift	
@@ -227,8 +244,8 @@ class Simulator
 		end while w >= 1
 
 		w = Math::sqrt( ( -2 * Math::log(w)) / w )
-		g2 = u1 * w;
-		g1 = u2 * w;
+		g2 = u1 * w
+		g1 = u2 * w
 		return g1
 	end				
 
@@ -252,7 +269,7 @@ class Simulator
 
 	def update_nbrs(nodeID)
 		# update the nbrs of nodeID
-		# NOTE only suport 1-hop neighborhoods right now
+		# NOTE only suports 1-hop neighborhoods right now
 		puts "@time=#{@time} in #{__method__}"
 		puts "updating nbrs for node #{nodeID}"
 		nbrs = get_physical_nbrs(nodeID)

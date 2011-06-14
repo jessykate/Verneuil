@@ -17,7 +17,6 @@ def simple_run title, width, height, move, join, part, initial_nodes,
 	num_puts, num_gets, wait_time
 
 	sim = Simulator.new
-	sim.run title
 	sim.uds_init width, height
 	sim.node_type Node, LMS
 

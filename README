@@ -1,5 +1,43 @@
 Ruby Simulator - in progress. 
 
 Verneuil - first scientist to come up with a commercially viable process for
-manufacture of synthetic gemstones. See
+the manufacture of synthetic gemstones. See
 http://en.wikipedia.org/wiki/Auguste_Verneuil
+
+Architecture
+
+* event_ids
+* modular topology, protocols, 
+
+Design Decisions
+
+the simulator as it stands was designed primarily to simulate protocol
+performance under different mobility models. it doesn't currently have a notion
+of network congestion or latency beyond the number of time steps it takes to
+execute the corresponding events, although it could without too much trouble. 
+
+* each node is assumed to be able to process messages arbitrarily fast (ie, the
+  number of messages a node processes during each time step is not checked, and
+  there is no threshold)
+* neighbour updates are controlled by the simulator and happen during *each*
+  iteration of the main run loop. 
+
+* mobility dynamics (eg. percent mobility) are simulator-wide, and we don't
+  currently support different mobility models (but that's planned). further,
+  there no matter what the mobility model, there are design decisions that have
+  to be made about how to represent the mobility that would have taken place
+  after a long time period has passed with no activity. 
+
+Usage
+
+Dependencies
+
+Todo
+* mobility models - random waypoint, hotspots. 
+* configurable neighbour update frequency
+
+LMS-related todo:
+* flooding 
+* cookie crumb protocol - leave behind info about where the probe went next. 
+* missing - track if probe's which result in 'missing' happen at the same node time or different?
+* comparisons for neighbour update protocol: nodes send out periodic beacons, 

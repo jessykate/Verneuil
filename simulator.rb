@@ -1,5 +1,4 @@
 require 'node'
-require 'lms'
 
 class NonLinearTimeError < RuntimeError; end
 class UnknownEventError < RuntimeError; end
@@ -123,7 +122,8 @@ class Simulator
 	end
 
 	def queue_periodic event_name, delta_t
-	   # a method to call every delta_t time units
+		# a method to call every delta_t time units
+		@periodic_events = @periodic_events || []
 		@periodic_events << [event_name, delta_t]
 	end
 
@@ -135,6 +135,9 @@ class Simulator
 		@title = title
 		unless condition
 			time, events_now = @Q.next
+			puts "start"
+			puts events_now
+			puts "end"
 			break if events_now == false
 			raise NonLinearTimeError if time < @time
 
@@ -193,10 +196,16 @@ class Simulator
 			puts "number of dead nodes = #{@dead_nodes.length}."
 			puts "number of live nodes = #{@nodes.length}."
 
-			# call any regularly scheduled events. 
-			@periodic_events.each {|event, interval|
-				send(event) if @time % interval == 0
-			}
+			# check for and schedule any periodic events as necessary. the
+			# event is queued 1 timestep before the interval so that it is
+			# executed when time % interval == 0 (of course it's only the time
+			# delta that matters, not when the event is executed during the
+			# interval)
+			if @periodic_events
+				@periodic_events.each {|event, interval|
+					queue(time = @time+1, event_id = nil, event, nil) if @time % interval == (interval - 1)
+				}
+			end
 
 			# process the events scheduled for this time. events_now is a list
 			# of events, size >= 1 (there are typically multiple events at the

@@ -2,7 +2,7 @@
 # Verneuil module to be included in Node class
 
 class Message
-	def init predicate, body, credits = 0
+	def initialize predicate, body, credits = 0
 		# neat way to generate a short uniq id (uses base 36), from
 		# http://blog.logeek.fr/2009/7/2/creating-small-unique-tokens-in-ruby
 		@id = rand(36**8).to_s(36) 
@@ -14,10 +14,10 @@ class Message
 	attr_reader :predicate, :body, :id
 	attr_accessor :credits
 
-	def set_proximity id, proximity
+	def set_proximity id, prox
 		# not 100% sure the destination list will be implemented as a hash, so
 		# keeping this method as the interface for now
-		@destinations[id] = proximity
+		@destinations[id] = prox
 	end
 
 	def get_proximity id
@@ -29,7 +29,7 @@ class Message
 		end
 	end
 
-	def count_delivered
+	def num_delivered
 		return @destinations.count{|k,v| v == -1}
 	end
 		
@@ -78,32 +78,40 @@ module PDR
 		# publish a message containing msg_body and associate it with the given
 		# predicate.
 		message = Message.new predicate, msg_body, @@credits
+		@messages_published = @messages_published || []
 		@messages_published << message
 		# send the message to this node first, which will check for local
 		# subscriptions and initialize the message with a destination list of
 		# nodes known to have subscriptions matching this predicate. the
 		# destination list stores the id, and the lowest proximity value for
 		# that id, known to this node. 
-		return forward message end
+		return forward message 
+	end
 
 	def add_subscription predicate
 		@st || @st = []
 		# subscription table stored predicate, application_id pairs. we don't
 		# need the app ID since we're only testing the routing protocol, so
 		# just store a 0. 
-		@st << [predicate, 0]
+		@st << [predicate, 0] unless @st.collect{|item| item[0]}.include? predicate
 	end
 
 	def delete_subscription predicate
+		@st || @st = []
 		@st.delete_if{|v| v[0] == predicate}
 	end
 
 	def summarize 
 		summary = []
+		@st || @st = []
 		@st.each {|pred, id|
 			summary << pred
 		}
-		return summary
+		if summary.empty?
+			return nil
+		else
+			return summary
+		end
 	end
 
 	def predicate_received pred_list, broker_id, current_time
@@ -115,13 +123,18 @@ module PDR
 		# proximity value to be computed at any time.
 		@pt = @pt || {}
 		@pt[broker_id] = [pred_list, current_time]
+		puts "added broker_id #{broker_id} to pt with [#{pred_list}, #{current_time}]"
 	end
 
 	def cleanup current_time
 		to_remove = []
 		# proximity is a value between 0 and 1 representing how recently we
 		# heard from id, or nil if the time has exceeded the timeout threshold. 
-		@pt.each {|id, pred_list, last_seen_time|
+		@pt = @pt || {}
+		pp @pt
+		@pt.each {|k,v|
+			id = k
+			pred_list, last_seen_time = *v
 			to_remove << id if not proximity(current_time - last_seen_time) 
 		}
 		to_remove.each{|id|
@@ -136,7 +149,7 @@ module PDR
 		return summarize
 	end
 
-	def proximity(time_delta)
+	def proximity time_delta
 		# the proximity value is infinite if broker b is not present in this
 		# node’s proximity table; otherwise it is a value in the range [0,1]
 		# calculated as the number of beacons missed from b, divided by the
@@ -155,12 +168,14 @@ module PDR
 	def forward message
 		# returns a response of this form
 		response = {:indicator, nil, :contents, nil}
+		@messages_received = @messages_received || []
 		if @messages_received.include? message.id 
 		   response[:indicator] = :duplicate
 		   return response
 		end
 
 		# check if the message matches any subscriptions on THIS node
+		@st = @st || []
 		@st.each{|predicate, id|
 			if predicate == message.predicate
 				# setting the proximity to -1 is used as an indicator that the
@@ -175,11 +190,15 @@ module PDR
 		# destination list. 
 		min_proximity = 1
 		matched_at_least_one = false
-		@pt.each{|id,pred_list,time|
+		@pt = @pt || {}
+		puts "@pt:"
+		pp @pt
+		@pt.each{|id,val|
+			pred_list,time = *val
 			# p is a proximity value between 0 and 1 representing when we last
 			# heard from node id
-			p = proximity(time)
-			if predicate == message.predicate and (
+			p = proximity time
+			if pred_list.include? message.predicate and (
 				not message.destination_include? id or p < message.get_proximity(id)
 				)
 				matched_at_least_one = true
@@ -188,7 +207,7 @@ module PDR
 				min_proximity = p if min_proximity > p
 			end
 		}
-		if not matched and message.credits > 0
+		if not matched_at_least_one and message.credits > 0
 			message.credits -= 1
 			matched = true
 		end
@@ -196,11 +215,12 @@ module PDR
 		# if we had any matches, schedule the message for transmission at a
 		# delay proportional to min_proximity
 		response[:contents] = message
-		if matched
+		if matched_at_least_one
 			response[:indicator] = :forward
 		else
 			response[:indicator] = :nomatch
 		end
+		return response
 	end
 
 end

@@ -15,27 +15,30 @@ module PDREvents
 	def publish(msg_body, predicate, nodeID)
 		# have nodeID setup and keep a record that it sent a message?
 		response = @nodes[nodeID].publish msg_body, predicate
-		# queue the next step
-		action = response[:indicator]
-		if action == :forward
-			queue(@time+1, @current_event_id, :broadcast, nodeID, :forward, message, :publish_callback)
-		else if action == :duplicate
-			# do some accounting and drop the message
-		else if action == :nomatch
-			# do some accounting and drop the message
-		end
-
+		publish_callback(response)
 	end
 
 	def publish_callback response
 		action = response[:indicator]
 		if result == :duplicate
-			# stuff
-		else if result == :nomatch
-			# stuff
-		else if result == :forward
-			queue(@time+1, @current_event_id, :broadcast, nodeID, :forward, message, :publish_callback)
-			# stuff
+			@stats[:message_log][@current_event_id] << [@time, :duplicate]
+		else 
+			# count stats about how many have been delivered
+			message = response[:message]
+			num_destinations = message.num_destinations
+			num_delivered = message.num_delivered
+			num_subscribers = @subscriptions[message.predicate]
+			stats = "stats"
+			def stats.data; return {:destinations, num_destinations, :delivered, num_delivered, :subscribers, num_subscribers}; end
+			@stats[:message_log][@current_event_id] << [@time, stats]
+
+			if result == :nomatch
+				@stats[:message_log][@current_event_id] << [@time, :nomatch]
+			elsif result == :forward
+				@stats[:message_log][@current_event_id] << [@time, :forward]
+				queue(@time+1, @current_event_id, :broadcast, nodeID, :forward, message, :publish_callback)
+				# stuff
+			end
 		end
 	end
 
@@ -51,6 +54,9 @@ module PDREvents
 	end
 
 	def add_subscription num_nodes, predicate
+		# keep track of how many subscribers there are for each predicate
+		@subscriptions = @subscriptions || {}
+		@subscriptions[predicate] = num_nodes
 		num_nodes.times {
 			nid = @nodes.keys()[rand(@nodes.length)]
 			@nodes[nid].add_subscription predicate
@@ -68,6 +74,31 @@ module PDREvents
 			queue @time+1, @current_event_id, :broadcast, fromID=nid, :predicate_received, 
 				[subscr_summary, nid, @time+1], nil
 		}
+	end
+
+	def stats_put
+		info = {}
+		published = @stats[:message_log].reject{|k,v| v[0][1] != :publish}
+		num_published = published.length
+		info[:num_published] = num_published
+		puts num_published
+
+		total_msgs = published.inject(0){|sum, item| sum += item.length}
+		avg_overhead = total_msgs/num_published
+		info[:avg_overhead] = avg_overhead
+		puts avg_overhead
+
+		published.each{|msg_id, history| 
+			idx = history.rindex{|item| item[1] == "stats"}
+			stats = history[idx][1]
+			data = stats.data
+			puts "stats for message #{msg_id}"
+			puts data
+		}
+		#num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
+		#info[:num_success] = num_success
+
+		return info
 	end
 
 end

@@ -9,7 +9,7 @@ class Message
 		@credits = credits
 		@predicate = predicate
 		@body = body
-		@destination_list = {}
+		@destinations = {}
 	end
 	attr_reader :predicate, :body, :id
 	attr_accessor :credits
@@ -17,25 +17,32 @@ class Message
 	def set_proximity id, proximity
 		# not 100% sure the destination list will be implemented as a hash, so
 		# keeping this method as the interface for now
-		@destination_list[id] = proximity
+		@destinations[id] = proximity
 	end
 
 	def get_proximity id
 		# will return nil if destination list does not include id
-		if @destination_list.key? id
-			return @destination_list[id]
+		if @destinations.key? id
+			return @destinations[id]
 		else
 			return 0
 		end
 	end
+
+	def count_delivered
+		return @destinations.count{|k,v| v == -1}
+	end
 		
+	def num_destinations
+		return @destinations.length
+	end
+
 	def add_destination 
-		@destination_list[id] = prox
-	
+		@destinations[id] = prox
 	end
 	
 	def destination_include? id
-		if @destination_list[id] 
+		if @destinations[id] 
 			return true
 		else 
 			return false
@@ -188,9 +195,9 @@ module PDR
 
 		# if we had any matches, schedule the message for transmission at a
 		# delay proportional to min_proximity
+		response[:contents] = message
 		if matched
 			response[:indicator] = :forward
-			response[:contents] = message
 		else
 			response[:indicator] = :nomatch
 		end

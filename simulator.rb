@@ -1,4 +1,5 @@
 require 'node'
+require 'pp'
 
 class NonLinearTimeError < RuntimeError; end
 class UnknownEventError < RuntimeError; end
@@ -42,6 +43,12 @@ class Simulator
 			next_events = @q.sort[0]
 			@q.delete(next_events[0]) #delete by key value
 			return next_events 
+		end
+
+		def future_event_names
+			# data always contains method name first
+			x = @q.values.collect{|data| data.collect{|event_info| event_info[0]}}
+			return x
 		end
 
 		def to_s
@@ -133,11 +140,20 @@ class Simulator
 		# to a boolean), else simulator will run until all the event have been
 		# exhausted. 
 		@title = title
-		unless condition
+		# time offset is used in the offchance that the first event is not
+		# scheduled for time 0
+		time_offset = 0
+		first_event = true
+		#unless condition == true
+		while true
+
 			time, events_now = @Q.next
-			puts "start"
-			puts events_now
-			puts "end"
+
+			if first_event			
+				time_offset = time 
+				first_event = false
+			end
+
 			break if events_now == false
 			raise NonLinearTimeError if time < @time
 
@@ -145,6 +161,25 @@ class Simulator
 			@delta_t = time - @time
 			@time = time
 			@stats[:events_per_unit_time] << {:time, @time, :num_events, events_now.length}
+
+			# check for and schedule any periodic events as necessary. 
+			if @periodic_events 
+				# check for a break condition - the periodic events only get
+				# scheduled if there are other 'real' events that still have to
+				# get executed. 
+				periodic_event_types = @periodic_events.collect{|item| item[0]}
+				real_events = @Q.future_event_names.uniq - periodic_event_types
+				puts "real events remaining"
+				pp real_events
+				unless real_events.empty?
+					@periodic_events.each {|event, interval|
+						if (@time-time_offset) % interval == 0
+							puts "queueing periodic event #{event} for time #{@time+time_offset+interval}"
+							queue(time = @time+time_offset+interval, event_id = nil, event, nil) 
+						end
+					}
+				end
+			end
 
 			# each time step, independent of what has been scheduled, we update
 			# node positions and network membership according to the values set
@@ -196,17 +231,6 @@ class Simulator
 			puts "number of dead nodes = #{@dead_nodes.length}."
 			puts "number of live nodes = #{@nodes.length}."
 
-			# check for and schedule any periodic events as necessary. the
-			# event is queued 1 timestep before the interval so that it is
-			# executed when time % interval == 0 (of course it's only the time
-			# delta that matters, not when the event is executed during the
-			# interval)
-			if @periodic_events
-				@periodic_events.each {|event, interval|
-					queue(time = @time+1, event_id = nil, event, nil) if @time % interval == (interval - 1)
-				}
-			end
-
 			# process the events scheduled for this time. events_now is a list
 			# of events, size >= 1 (there are typically multiple events at the
 			# same time). 
@@ -229,9 +253,15 @@ class Simulator
 				# originator, message_dropped gets thrown (and
 				# node_moved_or_died gets called). 
 				catch :message_dropped do 
-					send(event_name, *event_args) 
+					puts event_args
+					if event_args == [nil]
+						send(event_name)
+					else
+						send(event_name, *event_args) 
+					end
 				end
 			end
+			puts @Q
 		end
 		puts "finished!"
 	end

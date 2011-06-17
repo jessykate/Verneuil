@@ -23,10 +23,17 @@ sim.node_type Node, PDR
 sim.queue_periodic :beacon, 5
 sim.queue time=0, event_id=nil, :dynamics, move=0.5, join=0.0, part=0.0
 sim.queue time=1, event_id=nil, :addNodes, initial_nodes=50
-sim.queue time=10, event_id = nil, :add_subscription, 10, :activities
-sim.queue time=11, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
-sim.queue time=12, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
-sim.queue time=13, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+sim.queue time=11, event_id = nil, :add_subscription, 10, :activities
+sim.queue time=12, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
+sim.queue time=16, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
+sim.queue time=17, event_id=nil, :publish_rand, 'pop-up art installation', :activities
+sim.queue time=18, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+sim.queue time=19, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
+sim.queue time=100, event_id=nil, :publish_rand, 'pop-up art installation', :activities
+sim.queue time=101, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+sim.queue time=103, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
+sim.queue time=104, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+sim.queue time=109, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
 
 sim.run title = "demo"
 sim.stats_put

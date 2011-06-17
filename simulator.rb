@@ -237,7 +237,7 @@ class Simulator
 			until events_now.empty?
 				
 				event_name, event_args, event_id = events_now.shift	
-				puts "time #{time}: event #{event_name} with args #{event_args}"
+				pp "time #{time}: event #{event_name} with args #{event_args}"
 	
 				@current_event_id = event_id
 

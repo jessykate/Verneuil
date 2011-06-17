@@ -14,44 +14,81 @@ module PDREvents
 
 	def publish(msg_body, predicate, nodeID)
 		# have nodeID setup and keep a record that it sent a message?
-		response = @nodes[nodeID].publish msg_body, predicate
+		response = @nodes[nodeID].publish msg_body, predicate, @time
 		publish_callback(nodeID, response)
 	end
 
 	def publish_callback fromID, response
 		action = response[:indicator]
 		if action == :duplicate
-			@stats[:message_log][@current_event_id] << [@time, :duplicate]
+			# if this message was a duplicate, then there is no new information
+			# to record. 
+			#@stats[:message_log][@current_event_id] << [@time, :duplicate]
+			DESCHEDULE!!
 		else 
-			# count stats about how many have been delivered
+			# keep a record of the actual subscriptions, of nodes that have
+			# been detected as destinations, and all nodes to whom the message
+			# has been delivered. 
 			message = response[:contents]
-			num_destinations = message.num_destinations
-			puts "num_destinations = #{num_destinations}"
-			num_delivered = message.num_delivered
-			num_subscribers = @subscriptions[message.predicate]
-			stats = "stats"
-			stats.instance_eval {
-				@num_destinations = num_destinations
-				@num_delivered = num_delivered
-				@num_subscribers = num_subscribers
-				def data; return {:destinations, @num_destinations, :delivered, @num_delivered, :subscribers, @num_subscribers}; end
-			}
-			@stats[:message_log][@current_event_id] << [@time, stats]
+			@stats[:messages] = @stats[:messages] || {}
 
+			if not @stats[:messages].include? message.id
+				@stats[:messages][message.id] = {:published_at, @time, :last_updated, 
+					@time, :predicate, message.predicate, :body, message.body, 
+					:destinations, [], :delivered, [], :subscribers, []}
+			end
+			stats_this_msg = @stats[:messages][message.id]
+
+			# get the data from this version of the message
+			global_subscribers = @subscriptions[message.predicate]
+			this_copy_destinations = message.destinations
+			this_copy_delivered = message.delivered_to
+
+			# append any new info to our stats record (subscribers is a global
+			# property, but it's possible for it to be updated during the course
+			# of message delivery if new subscriptions are added). 
+			stats_this_msg[:subscribers] = stats_this_msg[:subscribers] | global_subscribers
+			stats_this_msg[:destinations] = stats_this_msg[:destinations] | this_copy_destinations
+			stats_this_msg[:delivered] = stats_this_msg[:delivered] | this_copy_delivered
+			stats_this_msg[:last_updated] = @time
+			
+			# take the necessary action, if any
 			if action == :nomatch
 				@stats[:message_log][@current_event_id] << [@time, :nomatch]
 			elsif action == :forward
 				@stats[:message_log][@current_event_id] << [@time, :forward]
-				queue(@time+1, @current_event_id, :broadcast, fromID, :forward, message, :publish_callback)
-				# stuff
+				delay = response[:delay]
+				queue(@time+1+Integer(delay), @current_event_id, :broadcast, fromID, :forward, [message, @time+1], :publish_callback)
 			end
 		end
+	end
+
+	def update_nbr_stats src_id, new_nbrs
+		# store the average number of neighbours (initialized in simulator class)
+
+		# update info
+		@nbrlists = @nbrlists || Hash.new {|hash, key| hash[key] = []}
+		old_nbrs = @nbrlists[src_id]
+		@nbrlists[src_id] = new_nbrs
+
+		@stats[:avg_neighbors] = Float((@stats[:avg_neighbors]*@stats[:neighbor_updates]) + 
+								new_nbrs.length)/Float(@stats[:neighbor_updates]+1)
+
+		# store the percent neighbour change
+		diff = (old_nbrs - new_nbrs)
+		percent_change = Float(diff.length)/Float(old_nbrs.length)
+		@stats[:avg_nbr_percent_change] = Float((@stats[:avg_nbr_percent_change]*@stats[:neighbor_updates]) + 
+								percent_change)/Float(@stats[:neighbor_updates]+1)
+		
+		# NOW update the count of neighbour updates
+		@stats[:neighbor_updates] += 1
 	end
 
 	def broadcast(fromID, recipient_method, recipient_method_args, callback)
 		# identify all neighbors of fromID and call the receiving method on
 		# those neigbors. 
 		nbrs = get_physical_nbrs(fromID)
+		update_nbr_stats fromID, nbrs
 		# call recipient_method on each neighbor
 		nbrs.each {|nbr|
 			result = @nodes[nbr].send(recipient_method, *recipient_method_args)
@@ -62,17 +99,19 @@ module PDREvents
 	end
 
 	def add_subscription num_nodes, predicate
-		# keep track of how many subscribers there are for each predicate
+		# keep track of subscribers for each predicate. this is used for
+		# delivery accounting and also to make sure subscriptions are added to
+		# nodes that aren't already subscribed to the given rpedicate (even if
+		# the subscription request occurs at a future time). 
 		@subscriptions = @subscriptions || {}
-		@subscriptions[predicate] = num_nodes
-		already_chosen = []
+		@subscriptions[predicate] = @subscriptions[predicate] || []
 		successful = 0
 		while successful < num_nodes
 			nid = @nodes.keys()[rand(@nodes.length)]
-			if already_chosen.include? nid
+			if @subscriptions[predicate].include? nid
 				next
 			else
-				already_chosen << nid
+				@subscriptions[predicate] << nid
 				@nodes[nid].add_subscription predicate
 				successful += 1
 			end
@@ -95,23 +134,25 @@ module PDREvents
 
 	def stats_put
 		info = {}
-		pp @stats[:message_log]
 		published = @stats[:message_log].reject{|k,v| v[0][1] != :publish_rand}
 		num_published = published.length
 		info[:num_published] = num_published
-		puts num_published
+		puts "num published = #{num_published}"
 
-		total_msgs = published.inject(0){|sum, item| sum += item.length}
-		avg_overhead = total_msgs/num_published
+		total_packets = published.inject(0){|sum, item| sum += item[1].length}
+		puts "total 'packets' sent for all msgs: #{total_packets}"
+		avg_overhead = Float(total_packets)/Float(num_published)
 		info[:avg_overhead] = avg_overhead
-		puts avg_overhead
+		puts "avg overhead = #{avg_overhead}"
 
-		published.each{|msg_id, history| 
-			idx = history.rindex{|item| item[1] == "stats"}
-			stats = history[idx][1]
-			data = stats.data
-			puts "stats for message #{msg_id}:"
-			pp data
+		puts "average number of neighbors: #{@stats[:avg_neighbors]}"
+		puts "average % neighbor change: #{@stats[:avg_nbr_percent_change]}"
+
+		sorted_msgs = @stats[:messages].sort{|a, b| a[1][:published_at] <=> b[1][:published_at]}
+		sorted_msgs.each{|msg_id, data| 
+			puts "Time #{data[:published_at]}, message id #{msg_id} (#{data[:predicate]}: #{data[:body]})"
+			puts "destinations, subscribers, delivered, total_time"
+			puts "#{data[:subscribers].length}, #{data[:destinations].length}, #{data[:delivered].length}, #{data[:last_updated]-data[:published_at]}"
 		}
 		#num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
 		#info[:num_success] = num_success

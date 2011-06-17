@@ -32,7 +32,15 @@ class Message
 	def num_delivered
 		return @destinations.count{|k,v| v == -1}
 	end
-		
+
+	def delivered_to
+		return @destinations.collect{|k,v| k if v == -1} - [nil]
+	end
+
+	def destinations
+		return @destinations.keys
+	end
+
 	def num_destinations
 		return @destinations.length
 	end
@@ -74,7 +82,7 @@ module PDR
 		@@credits = credits
 	end
 
-	def publish msg_body, predicate
+	def publish msg_body, predicate, current_time
 		# publish a message containing msg_body and associate it with the given
 		# predicate.
 		message = Message.new predicate, msg_body, @@credits
@@ -85,7 +93,7 @@ module PDR
 		# nodes known to have subscriptions matching this predicate. the
 		# destination list stores the id, and the lowest proximity value for
 		# that id, known to this node. 
-		return forward message 
+		return forward message, current_time
 	end
 
 	def add_subscription predicate
@@ -123,7 +131,7 @@ module PDR
 		# proximity value to be computed at any time.
 		@pt = @pt || {}
 		@pt[broker_id] = [pred_list, current_time]
-		puts "added broker_id #{broker_id} to pt with [#{pred_list}, #{current_time}]"
+		#puts "added broker_id #{broker_id} to pt with [#{pred_list}, #{current_time}]"
 	end
 
 	def cleanup current_time
@@ -131,7 +139,7 @@ module PDR
 		# proximity is a value between 0 and 1 representing how recently we
 		# heard from id, or nil if the time has exceeded the timeout threshold. 
 		@pt = @pt || {}
-		pp @pt
+		#pp @pt
 		@pt.each {|k,v|
 			id = k
 			pred_list, last_seen_time = *v
@@ -159,20 +167,30 @@ module PDR
 		# down, which is what we want. 
 		intervals = time_delta / @@beacon_interval
 		if intervals > @@timeout
-			return nil
+			infinity = 1.0/0
+			return infinity
 		else
-			return intervals/@@timeout
+			return Float(intervals)/@@timeout
 		end
 	end
 
-	def forward message
+	def forward message, current_time
 		# returns a response of this form
 		response = {:indicator, nil, :contents, nil}
+
+		# check if this message has been received already, and if this is a
+		# transmission from a node who had a lower proximity than this node to
+		# one of the destinations, then this node deschedules its own future
+		# transmission. 
 		@messages_received = @messages_received || []
 		if @messages_received.include? message.id 
-		   response[:indicator] = :duplicate
+		   #response[:indicator] = :duplicate
+		   response[:indicator] = :deschedule
+		   response[:contents] = message
 		   return response
 		end
+
+		@messages_received << message.id
 
 		# check if the message matches any subscriptions on THIS node
 		@st = @st || []
@@ -188,16 +206,18 @@ module PDR
 		# see if we know about any other nodes interested in this predicate. if
 		# this is the originating node, this block actually initializes the
 		# destination list. 
-		min_proximity = 1
+		min_proximity = 1 # initialize to max proximity
 		matched_at_least_one = false
 		@pt = @pt || {}
-		puts "@pt:"
-		pp @pt
+		#puts "@pt:"
+		#pp @pt
 		@pt.each{|id,val|
 			pred_list,time = *val
 			# p is a proximity value between 0 and 1 representing when we last
 			# heard from node id
-			p = proximity time
+			p = proximity (current_time - time)
+			puts "debug: proximity = #{p}" 
+
 			if pred_list.include? message.predicate and (
 				not message.destination_include? id or p < message.get_proximity(id)
 				)
@@ -217,6 +237,8 @@ module PDR
 		response[:contents] = message
 		if matched_at_least_one
 			response[:indicator] = :forward
+			puts "delaying forward by #{min_proximity*@@delay_factor}"
+			response[:delay] = min_proximity*@@delay_factor
 		else
 			response[:indicator] = :nomatch
 		end

@@ -18,6 +18,9 @@ class Simulator
 
 	class PriorityQueue
 		def initialize
+			# the queue is a set of key-value pairs where the key is the time
+			# (priority) and the value is a list of events to be executed at
+			# that time. 
 			@q = Hash.new {|hash, key| hash[key] = []}
 			def @q.to_s 
 				s = ""
@@ -30,10 +33,67 @@ class Simulator
 
 		def insert(priority, event_id, data)
 			# lower priority is HIGHER
-
 			event_id = Simulator.new_event_id unless event_id
 			# each event contains event_name, event_args, event_id
 			@q[priority] << data + [event_id]
+		end
+
+		def find_event event_id=nil, event_name=nil, arg=nil
+			# searches through the queue using event_id or event name, and then
+			# narrows down the selection using the arguments criteria (ie arg
+			# is some value that should be one of the arguments). 
+			matches = @q 
+			puts "the queue contains the following contents:"
+			pp @q
+			# each 'value' is a list of lists. we want to check the list within each list
+			if event_id
+				next_matches = {}
+				matches.each{|k,events_this_priority|
+					events_this_priority.each{|set_of_events|
+						if set_of_events.last == event_id
+							next_matches[k] = next_matches.fetch(k,[]) << set_of_events
+						end
+					}
+				}
+				matches = next_matches
+				puts "matches against event_id #{event_id}"
+				pp matches
+			end
+			if event_name
+				next_matches = {}
+				matches.each{|k,events_this_priority|
+					events_this_priority.each{|set_of_events|
+						if set_of_events.first == event_name
+							next_matches[k] = next_matches.fetch(k,[]) << set_of_events
+						end
+					}
+				}
+				matches = next_matches
+				puts "matches against event_name #{event_name}"
+				pp matches
+			end
+			# values are each a list of event_name, event_args, event_id
+			if arg
+				next_matches = {}
+				matches.each{|k,events_this_priority|
+					events_this_priority.each{|set_of_events|
+						if set_of_events[1].include? arg
+							next_matches[k] = next_matches.fetch(k,[]) << set_of_events
+						end
+					}
+				}
+				matches = next_matches
+				puts "matches against arg #{arg}"
+				pp matches
+			end
+			return matches
+		end
+
+		def deschedule priority, event_data
+			@q[priority].delete(event_data)
+			if @q[priority].empty?
+				@q.delete priority
+			end
 		end
 
 		def next

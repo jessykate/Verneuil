@@ -6,6 +6,7 @@ module PDREvents
 	@@num_subscribers = nil
 
 	def publish_rand(msg_body, predicate)
+		puts "current event id = #{@current_event_id}"	
 		# pick a random node to publish a message
 		nid = @nodes.keys()[rand(@nodes.length)]
 		publish(msg_body, predicate, nid)
@@ -13,18 +14,30 @@ module PDREvents
 
 
 	def publish(msg_body, predicate, nodeID)
-		# have nodeID setup and keep a record that it sent a message?
+		puts "current event id = #{@current_event_id}"	
 		response = @nodes[nodeID].publish msg_body, predicate, @time
 		publish_callback(nodeID, response)
 	end
 
 	def publish_callback fromID, response
+		puts "current event id = #{@current_event_id}"	
 		action = response[:indicator]
-		if action == :duplicate
-			# if this message was a duplicate, then there is no new information
-			# to record. 
-			#@stats[:message_log][@current_event_id] << [@time, :duplicate]
-			DESCHEDULE!!
+		puts "action = #{action}"
+		if action == :deschedule
+			puts "event will be descheduled"
+			# DESCHEDULE!!
+			@stats[:message_log][@current_event_id] << [@time, :deschedule]
+			# check for future scheduled transmissions from fromID of message
+			# matching the current_event_id.
+			#events = @Q.find_event(event_id = nil,event_name = :broadcast, arg=fromID)
+			event = @Q.find_event(event_id = @current_event_id, event_name = :broadcast, arg=fromID)
+			puts "found event(s):"
+			pp event
+			# this inject call flattens the hash (flatten method is ruby 1.9)
+			if event
+				event = event.inject([]){|list, obj| list + obj}
+				@Q.deschedule(priority = event.shift, event_data=event)
+			end
 		else 
 			# keep a record of the actual subscriptions, of nodes that have
 			# been detected as destinations, and all nodes to whom the message
@@ -139,23 +152,28 @@ module PDREvents
 		info[:num_published] = num_published
 		puts "num published = #{num_published}"
 
-		total_packets = published.inject(0){|sum, item| sum += item[1].length}
-		puts "total 'packets' sent for all msgs: #{total_packets}"
-		avg_overhead = Float(total_packets)/Float(num_published)
-		info[:avg_overhead] = avg_overhead
-		puts "avg overhead = #{avg_overhead}"
-
 		puts "average number of neighbors: #{@stats[:avg_neighbors]}"
 		puts "average % neighbor change: #{@stats[:avg_nbr_percent_change]}"
 
+		avg_results = {:subscribers, 0, :destinations, 0, :delivered, 0, :total_time, 0}
 		sorted_msgs = @stats[:messages].sort{|a, b| a[1][:published_at] <=> b[1][:published_at]}
 		sorted_msgs.each{|msg_id, data| 
 			puts "Time #{data[:published_at]}, message id #{msg_id} (#{data[:predicate]}: #{data[:body]})"
-			puts "destinations, subscribers, delivered, total_time"
+			puts "subscribers, destinations, delivered, total_time"
 			puts "#{data[:subscribers].length}, #{data[:destinations].length}, #{data[:delivered].length}, #{data[:last_updated]-data[:published_at]}"
+			avg_results[:subscribers] += data[:subscribers].length
+			avg_results[:destinations] += data[:destinations].length
+			avg_results[:delivered] += data[:delivered].length
+			avg_results[:total_time] += (data[:last_updated] - data[:published_at])
 		}
-		#num_success = put_logs.inject(0){|sum, item| sum += item[1].count{|x| x.include? :success}}
-		#info[:num_success] = num_success
+		total_packets = published.inject(0){|sum, item| sum += item[1].length}
+		puts "total 'packets' sent for all msgs: #{total_packets}"
+
+		avg_overhead = Float(total_packets)/Float(avg_results[:delivered])
+		info[:avg_overhead] = avg_overhead
+		puts "avg overhead per received = #{avg_overhead}"
+		avg_results.each{|k,v| avg_results[k] = v = Float(v)/sorted_msgs.length }
+		pp avg_results
 
 		return info
 	end

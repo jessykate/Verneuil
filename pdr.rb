@@ -25,7 +25,7 @@ class Message
 		if @destinations.key? id
 			return @destinations[id]
 		else
-			return 0
+			return 1.0/0
 		end
 	end
 
@@ -176,21 +176,23 @@ module PDR
 
 	def forward message, current_time
 		# returns a response of this form
+		puts "in forward() at time #{current_time} at node #{@nid}"
 		response = {:indicator, nil, :contents, nil}
 
 		# check if this message has been received already, and if this is a
 		# transmission from a node who had a lower proximity than this node to
 		# one of the destinations, then this node deschedules its own future
 		# transmission. 
-		@messages_received = @messages_received || []
-		if @messages_received.include? message.id 
+		@messages_forwarded = @messages_forwarded || []
+		puts "checking messages received against this message.id = #{message.id}"
+		pp @messages_forwarded
+		
+		if @messages_forwarded.include? message.id 
 		   #response[:indicator] = :duplicate
 		   response[:indicator] = :deschedule
 		   response[:contents] = message
 		   return response
 		end
-
-		@messages_received << message.id
 
 		# check if the message matches any subscriptions on THIS node
 		@st = @st || []
@@ -200,6 +202,7 @@ module PDR
 				# message was delivered, since no calculated proximity will
 				# ever be less than -1. 
 				message.set_proximity(@nid, -1)
+				puts "message was delivered at node #{@nid}"
 			end	
 		}
 
@@ -222,6 +225,7 @@ module PDR
 				not message.destination_include? id or p < message.get_proximity(id)
 				)
 				matched_at_least_one = true
+				puts "proximity being added/updated for id #{id}. old: #{message.get_proximity(id)}. new: #{p}"
 				message.set_proximity(id, p)
 				# keep track of the min_proximity we've seen
 				min_proximity = p if min_proximity > p
@@ -236,6 +240,7 @@ module PDR
 		# delay proportional to min_proximity
 		response[:contents] = message
 		if matched_at_least_one
+			@messages_forwarded << message.id
 			response[:indicator] = :forward
 			puts "delaying forward by #{min_proximity*@@delay_factor}"
 			response[:delay] = min_proximity*@@delay_factor

@@ -12,28 +12,30 @@ class Simulator
 	include PDREvents
 end
 
-PDR.setup beacon_interval=5, delay_factor=10, timeout=10, credits=0
-Node.setup broadcastRange = 0, broadcastMin = 5, bufferRange = 0, bufferMin =	100
+PDR.setup beacon_interval=5, delay_factor=20, timeout=10, credits=0
+Node.setup broadcastRange = 100, broadcastMin = 100, bufferRange = 0, bufferMin =	100
 
 sim = Simulator.new
-sim.uds_init width=10, height=10
+sim.uds_init width=1000, height=1000
 sim.node_type Node, PDR
 
 # will send out a beacon with subscription info at regular intervals
 sim.queue_periodic :beacon, 5
-sim.queue time=0, event_id=nil, :dynamics, move=0.5, join=0.0, part=0.0
-sim.queue time=1, event_id=nil, :addNodes, initial_nodes=50
+sim.queue time=0, event_id=nil, :dynamics, move=0.4, join=0.0, part=0.0
+sim.queue time=1, event_id=nil, :addNodes, initial_nodes=200
 sim.queue time=11, event_id = nil, :add_subscription, 10, :activities
-sim.queue time=12, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
-sim.queue time=16, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
-sim.queue time=17, event_id=nil, :publish_rand, 'pop-up art installation', :activities
-sim.queue time=18, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
-sim.queue time=19, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
-sim.queue time=100, event_id=nil, :publish_rand, 'pop-up art installation', :activities
-sim.queue time=101, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
-sim.queue time=103, event_id=nil, :publish_rand, 'hackathon at 3pm!', :activities
-sim.queue time=104, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
-sim.queue time=109, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+
+(26..40).each{|t| 
+	if t % 2 == 0
+		sim.queue time=t, event_id=nil, :publish_rand, 'pop-up art installation', :activities
+	end
+}
+
+(25..39).each{|t| 
+	if t % 2 == 1
+		sim.queue time=t, event_id=nil, :publish_rand, 'chinese dragon festival', :activities
+	end
+}
 
 sim.run title = "demo"
 sim.stats_put

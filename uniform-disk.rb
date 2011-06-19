@@ -16,13 +16,14 @@ module UDSTopology
 		@height = height
 		puts "width = #{width}, height=#{height}"
 		# keep track of which locations are occupied. 
-		@occupied = Hash.new
-		(0..@width-1).each{|x|
-			(0..@height-1).each{|y|
-				@occupied[[x,y]] = false
-				print '.'
-			}
-		}
+		@occupied = Hash.new{|h,k| h[k] = false}
+
+		#(0..@width-1).each{|x|
+		#	(0..@height-1).each{|y|
+		#		@occupied[[x,y]] = false
+		#		print '.'
+		#	}
+		#}
 		puts ""
 		$stdout.flush
 	end
@@ -45,10 +46,8 @@ module UDSTopology
 		# defined topology. 	
 		oldX = @nodes[nodeID].x
 		oldY = @nodes[nodeID].y
-		raise TopologyError, "Location (#{newX}, #{newY}) out of bounds" if 
-		!validLocation(newX, newY)
-		raise TopologyError, "Cannot move node to occupied location" if 
-		@occupied[[newX,newY]]
+		raise TopologyError, "Location (#{newX}, #{newY}) out of bounds" if !validLocation(newX, newY)
+		raise TopologyError, "Cannot move node to occupied location" if @occupied[[newX,newY]]
 		@occupied[[oldX,oldY]] = false
 		@nodes[nodeID].x = newX
 		@nodes[nodeID].y = newY
@@ -71,19 +70,21 @@ module UDSTopology
 		# might argue that nodes should preferentially enter from the edges of
 		# the space only.  however, there are various reasons why this might
 		# not be the case-- getting out of a car, turning on a device, etc. 
-		available = emptySpots()
-		if available.empty?
-			puts "sim full!"
-			return false
-		else
-			loc = available[rand(available.length)]
-			return addNodeAtLocation(*loc)
-		end
+		available = emptySpot()
+		return addNodeAtLocation(*available) unless not available
+		#available = emptySpots()
+#		if available.empty?
+#			puts "sim full!"
+#			return false
+#		else
+#			loc = available[rand(available.length)]
+#			return addNodeAtLocation(*loc)
+#		end
 	end
 
 	def addNodeAtLocation(x,y)
 		raise TopologyError, "Location (#{newX}, #{newY}) out of bounds" if 
-		!validLocation(x,y)
+			!validLocation(x,y)
 		raise TopologyError, "Location out of bounds" if !validLocation(x,y)
 		@occupied[[x,y]] = true
 		n = @Node.new
@@ -133,11 +134,37 @@ module UDSTopology
 		return valid
 	end
 
+	def emptySpot
+	# makes use of the assumption that occupied locations will be sparse
+		# compared to empty locations, and that making a list of all empty
+		# locations is always O(area), whereas in general this will be O(1) or
+		# O(2)
+		if @occupied.length == @width*@height
+			puts "sim full!"
+			return false
+		end
+		while true
+			x = rand(@width)
+			y = rand(@height)
+			if not @occupied[[x,y]]
+				return [x,y]
+			end
+		end
+	end
+
 	def emptySpots()
 		# returns an array of [x,y] coords which are empty (unoccupied)
 		empty = []
-		# fancy-pants ruby block notation... <3.  
-		@occupied.each{|loc, occupied| empty << loc if occupied == false}
+		occ_locations = @occupied.keys
+		(0..@width-1).each{|x|
+			(0..@height-1).each{|y|
+				# hopefully this is faster than visiting every location in the
+				# occupied array. but assumes that in general occuied locations
+				# will be sparse compared to total locations.
+				empty << [x,y] if not occ_locations.include? [x,y]
+				#@occupied.each{|loc, occupied| empty << loc if occupied == false}
+			}
+		}
 		return empty
 	end
 
